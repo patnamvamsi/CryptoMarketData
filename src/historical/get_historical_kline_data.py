@@ -48,7 +48,7 @@ def _get_symbols():
     return (symbols)
 
 def fetch_symbols():
-    with open('Symbols.txt', 'r') as reader:
+    with open('../Symbols.txt', 'r') as reader:
         sym = reader.read().splitlines()
         return sym
 
