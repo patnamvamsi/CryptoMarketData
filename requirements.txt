@@ -1,3 +1,4 @@
 binance
 qpython
 fastapi
+uvicorn
