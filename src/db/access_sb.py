@@ -12,8 +12,6 @@ def connection():
 
     print('Connected to KDB')
 
-
-
 connection()
 
 '''
