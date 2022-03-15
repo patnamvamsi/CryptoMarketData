@@ -1,5 +1,5 @@
-from fastapi import FastAPI
-from src.config import config
+from fastapi import FastAPI, status, HTTPException
+from app import config
 from pydantic import BaseModel
 import csv
 
@@ -20,10 +20,13 @@ def landing():
 
 @app.get("/symbol/{sym}")
 def get_full_historical_data(sym: str):
-    f = config.DATA_ROOT_DIR + "1day\\" + sym + "\\" + "XRPAUD_01-Jan-2010_20-Sep-2021"
-    with open(f, newline='') as f:
-        reader = csv.reader(f)
-        data = list(reader)
+    try:
+        f = config.DATA_ROOT_DIR + "1day\\" + sym + "\\" + "XRPAUD_01-Jan-2010_20-Sep-2021"
+        with open(f, newline='') as f:
+            reader = csv.reader(f)
+            data = list(reader)
+    except:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return data
 
 @app.get("/symbol/{sym}/from/{start_date}/to/{end_date}")
@@ -48,7 +51,13 @@ accept the source binance or coinbase etc, default to binance
 1. Design  decision -- how to stream data with min lag -- required for live trading, not now
 
 '''
-
+'''
+uses these status codes to return correct ones:"
+HTTP_200_OK = 200
+HTTP_201_CREATED = 201
+HTTP_202_ACCEPTED = 202  -- for batch processing
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+'''
 
 ''' iki When to use get and when to use post'''
 
@@ -63,6 +72,7 @@ if any new symbol is listed in binance,
  1. update the symbol table 
  2. create a new table for the symbol
  3. start fetching the data
+ 
  
  '''
 

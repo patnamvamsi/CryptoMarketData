@@ -2,3 +2,4 @@ binance
 qpython
 fastapi
 uvicorn
+#pyq

@@ -1,14 +1,14 @@
 import os
 from os import path
-import datetime
-
-import config, csv
+from config import config
+import  csv
 from binance.client import Client
 import datetime
 
 client = Client(config.API_KEY, config.API_SECRET)
 
-data_root_dir = "binance_historical_data/1day/"
+#data_root_dir = "/media/vamsi/Elements 8TB/crypto/binance_historical_data/1minute/"
+data_root_dir = "/media/vamsi/Elements 8TB/crypto/binance_historical_data/1day/"
 
 
 def _write_ticker_to_file(symbol, start_ticker_time, end_date):
@@ -91,9 +91,15 @@ def _get_most_recent_timestamp(data_root_dir, symbol):
         for filename in os.listdir(directory):
             try:
                 with open(os.path.join(directory, filename), 'r') as f:
-                    last_line = f.read().splitlines()[-1]
-                    if max_time < int(last_line.split(",")[6]):
-                        max_time = int(last_line.split(",")[6])
+                    if os.fstat(f.fileno()).st_size > 0:  # checking if file is empty
+                        last_line = f.read().splitlines()[-1]
+                        reader = csv.reader(f)
+                        for row in reader:
+                            if int(float(row[0])) > max_time:
+                                max_time = int(float(row[0]))
+                        #last_line = f.read().splitlines()[-1]
+                        if max_time < int(last_line.split(",")[6]):
+                            max_time = int(last_line.split(",")[6])
             except Exception as file_ex:
                 print("Error Reading file:" + filename + str(file_ex))
     except Exception as ex:
