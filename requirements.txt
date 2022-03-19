@@ -3,3 +3,4 @@ qpython
 fastapi
 uvicorn
 #pyq
+sqlalchemy

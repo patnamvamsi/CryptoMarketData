@@ -1,25 +1,73 @@
+import os
 from db.timescaledb import connect_postgres as tscdb
 from db.timescaledb import queries as qry
 from config import config as cfg
-from binance.client import Client
 
 
-def load_csv_to_db(csv_file, db_name, table_name, delimiter=','):
+def load_csv_to_db(root_dir, delimiter=','):
     """
     Loads a CSV file into a TimescaleDB database.
-
-    :param csv_file: The CSV file to load.
-    :param db_name: The name of the database to load the CSV file into.
-    :param table_name: The name of the table to load the CSV file into.
+    :param root_dir:
     :param delimiter: The delimiter to use in the CSV file.
     :return: None
     """
-    #intiialise db connection
-    #cur = get_market_data_conn()
+    PATH = root_dir
+    PATH = PATH #+ '/XRPAUD/'
+    kline_interval = Client.KLINE_INTERVAL_1DAY
 
-    table = create_table_if_not_exists("XRPUSDT", Client.KLINE_INTERVAL_1MINUTE)
-    print(table)
+    #initialise db connection
+    initiate_market_data_conn()
 
+    #loop through each directory in the main directory
+    for sub_dir in os.scandir(PATH):
+        if sub_dir.is_dir():
+            print("Processing Directory: " + sub_dir.name)
+            for filename in os.scandir(PATH + sub_dir.name):
+                if filename.is_file():
+                    print("Processing: " + filename.path)
+
+                    # identify the symbol based on the file prefix
+                    symbol = filename.name.split('_')[0]
+
+                    # load each csv file into the database
+
+                    # create a table in the database if it does not exist
+                    table = create_table_if_not_exists(symbol, kline_interval)
+
+                    # load the csv file into temp table
+                    if (load_file_to_temp_table(filename)):
+                        # insert into the main table
+                        query, table_name = qry.load_kline_temp_to_main(symbol, kline_interval)
+                        load_into_main_and_truncate_temp(query, table_name)
+
+                # Archive the loaded files
+
+
+def load_into_main_and_truncate_temp(query, table_name):
+    try:
+        with tscdb.CursorFromConnectionPool() as cursor:
+            cursor.execute(query)
+            print("Kline data transferred from temp_kline_binance table to {}".format(table_name))
+            cursor.execute("TRUNCATE TABLE temp_kline_binance")
+            cursor.execute("commit")
+    except Exception as e:
+        print("Error: {}".format(e))
+        return False
+
+    return True
+
+def load_file_to_temp_table(filename):
+    try:
+        f = open(filename.path, 'r')
+        with tscdb.CursorFromConnectionPool() as cursor:
+            cursor.copy_from(f, "temp_kline_binance", sep=',')
+            print("File {} loaded to temp_kline_binance".format(filename.path))
+            cursor.execute('commit')
+    except Exception as e:
+        print("Error: {}".format(e))
+        return False
+
+    return True
 
 
 def create_table_if_not_exists(symbol, kline_interval):
@@ -30,11 +78,10 @@ def create_table_if_not_exists(symbol, kline_interval):
     :param column_names: The names of the columns to create in the table.
     :return: None
     """
-    #initialise db connection
-    initiate_market_data_conn()
+
 
     #check if table exists
-    query,table_name = qry.check_if_table_exists (symbol, kline_interval)
+    query, table_name = qry.check_if_table_exists (symbol, kline_interval)
     with tscdb.CursorFromConnectionPool() as cursor:
         cursor.execute(query)
         if (cursor.fetchone()[0] == False):
@@ -56,6 +103,5 @@ def initiate_market_data_conn(  ):
 
 
 
-
-load_csv_to_db('/home/ubuntu/data/market_data/market_data_2018-01-01_2018-12-31.csv', 'market_data', 'market_data')
+#load_csv_to_db(cfg.DATA_ROOT_DIR)
 
