@@ -1,6 +1,6 @@
 from psycopg2 import pool
 import psycopg2
-
+from app.config import config as cfg
 
 class Database:
     __connection_pool = None
@@ -56,10 +56,10 @@ def connect():
         # connect to the Timescaledb server
         print('Connecting to the Timescaledb database...')
         conn = psycopg2.connect(
-            host="192.168.0.101",
-            database="market_data",
-            user="postgres",
-            password="password")
+            host=cfg.TIMESCALE_HOST,
+            database=cfg.TIMESCALE_DATABASE,
+            user=cfg.TIMESCALE_USER,
+            password=cfg.TIMESCALE_PASSWORD)
 
         # create a cursor
         cur = conn.cursor()

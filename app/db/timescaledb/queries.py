@@ -1,4 +1,7 @@
-
+import sqlalchemy
+from sqlalchemy import create_engine
+from app.config import config as cfg
+import pandas as pd
 
 def create_kline_temp_table():
     """
@@ -101,3 +104,86 @@ def load_kline_temp_to_main(symbol, kline_interval):
         DO NOTHING;
     """
     return query, table_name
+
+def create_sqlalchemy_engine_conn():
+    ts_engine = create_engine('postgresql://' + cfg.TIMESCALE_USERNAME + ':' +
+                              cfg.TIMESCALE_PASSWORD + '@' +
+                              cfg.TIMESCALE_HOST + ':' +
+                              cfg.TIMESCALE_PORT + '/' +
+                              cfg.TIMESCALE_MARKET_DATA_DB)
+    return ts_engine
+
+def update_binance_symbols(df):
+
+    ts_engine = create_sqlalchemy_engine_conn()
+
+    df.to_sql('temp_binance_symbols', ts_engine, if_exists='replace', dtype=
+    {'filters': sqlalchemy.types.JSON, 'ordertypes': sqlalchemy.types.JSON, 'permissions': sqlalchemy.types.JSON})
+
+    update_sql = '''
+    UPDATE binance_symbols  p
+        SET
+        status= T.status,
+        baseAsset = T.baseAsset,
+        baseAssetPrecision  = T.baseAssetPrecision,
+        quoteAsset = T.quoteAsset,
+        quotePrecision  = T.quotePrecision ,
+        quoteAssetPrecision  = T.quoteAssetPrecision ,
+        baseCommissionPrecision  = T.baseCommissionPrecision ,
+        quoteCommissionPrecision  = T.quoteCommissionPrecision ,
+        orderTypes  = T.orderTypes ,
+        icebergAllowed   = T.icebergAllowed  ,
+        ocoAllowed = T.ocoAllowed ,
+        quoteOrderQtyMarketAllowed  = T.quoteOrderQtyMarketAllowed ,
+        allowTrailingStop = T.allowTrailingStop ,
+        isSpotTradingAllowed  = T. isSpotTradingAllowed ,
+        isMarginTradingAllowed  = T.isMarginTradingAllowed  ,
+        filters  = T.filters ,
+        permissions  = T.permissions ,
+        version = P.version + 1,
+        last_updated = T.last_updated
+        FROM temp_binance_symbols  T WHERE p.symbol = T.symbol
+        '''
+
+    insert_sql = '''INSERT INTO binance_symbols 
+    SELECT * FROM temp_binance_symbols WHERE
+    symbol NOT IN (SELECT symbol from binance_symbols)'''
+
+    drop_temp_table = 'DROP TABLE temp_binance_symbols'
+
+    with ts_engine.begin() as conn:  # TRANSACTION
+        conn.execute(update_sql)
+        conn.execute(insert_sql)
+        conn.execute(drop_temp_table)
+
+
+def update_symbol_config(symbol,priority,activate):
+
+    ts_engine  = create_sqlalchemy_engine_conn()
+
+    sql = f"""
+    UPDATE binance_symbols
+    SET
+    priority = {priority},
+    active = {activate},
+    version = version + 1,
+    last_updated = CURRENT_TIMESTAMP
+    WHERE symbol = '{symbol}'"""
+
+    with ts_engine.begin() as conn:
+        conn.execute(sql)
+
+
+
+def get_active_symbols(active=True):
+
+    ts_engine  = create_sqlalchemy_engine_conn()
+    sql = f"""
+    SELECT symbol from binance_symbols
+    WHERE active = {active}"""
+
+    with ts_engine.begin() as conn:
+        ResultProxy = conn.execute(sql)
+        symbol_list = pd.DataFrame(ResultProxy.fetchall())[0].values
+
+    return symbol_list
