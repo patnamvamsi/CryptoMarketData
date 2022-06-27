@@ -6,9 +6,7 @@ from binance.client import Client
 import datetime
 
 client = Client(config.API_KEY, config.API_SECRET)
-
-#data_root_dir = "/media/vamsi/Elements 8TB/crypto/binance_historical_data/1minute/"
-data_root_dir = "/media/vamsi/Elements 8TB/crypto/binance_historical_data/1day/"
+data_root_dir = config.DATA_ROOT_DIR
 
 
 def _write_ticker_to_file(symbol, start_ticker_time, end_date):

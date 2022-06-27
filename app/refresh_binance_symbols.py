@@ -4,8 +4,6 @@ from binance.client import Client
 from db.timescaledb import queries as q
 
 
-
-
 def refresh_binance_symbols():
 
     client = Client(cfg.API_KEY, cfg.API_SECRET)
@@ -18,8 +16,6 @@ def refresh_binance_symbols():
     df.set_index('symbol', inplace=True)
     df.columns = df.columns.str.lower()
     q.update_binance_symbols(df)
-
-
 
 #refresh_binance_symbols()
 

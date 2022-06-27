@@ -143,5 +143,4 @@ def load_csv_symbol_to_db(root_dir, kline_intervel,delimiter=','):
                 # Archive the loaded files
 
 #load_csv_to_db(cfg.DATA_ROOT_DIR,Client.KLINE_INTERVAL_1DAY)
-load_csv_symbol_to_db("/media/vamsi/Elements 8TB/crypto/binance_historical_data/1minute/",
-               Client.KLINE_INTERVAL_1MINUTE)
+#load_csv_symbol_to_db("/media/vamsi/Elements 8TB/crypto/binance_historical_data/1minute/",Client.KLINE_INTERVAL_1MINUTE)
