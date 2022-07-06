@@ -156,6 +156,8 @@ def update_binance_symbols(df):
         conn.execute(insert_sql)
         conn.execute(drop_temp_table)
 
+    return 0 # return row count
+
 
 def update_symbol_config(symbol,priority,activate):
 

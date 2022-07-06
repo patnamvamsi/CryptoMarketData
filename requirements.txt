@@ -1,6 +1,9 @@
-binance
+python-binance
 qpython
 fastapi
 uvicorn
 #pyq
 sqlalchemy
+psycopg2
+pandas
+requests

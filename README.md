@@ -14,4 +14,5 @@ The captured data is stored in Timescale DB. Support for KDB database in WIP
 
 Steps to run as a service:
 cd <your_project_location>/CryptoMarketData/app/
+
 $python -m uvicorn main:app --reload --port 8002

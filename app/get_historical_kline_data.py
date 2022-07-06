@@ -48,7 +48,7 @@ def _get_symbols():
     return (symbols)
 
 
-def fetch_symbols():
+def fetch_symbols():  #get from DB
     with open('Symbols.txt', 'r') as reader:
         sym = reader.read().splitlines()
         return sym

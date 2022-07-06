@@ -17,7 +17,17 @@ def refresh_binance_symbols():
     df.columns = df.columns.str.lower()
     q.update_binance_symbols(df)
 
+
+def set_symbol_priority(symbol, priority, activate = True):
+    q.update_symbol_config(symbol, priority, activate)
+    return("Success")
+
+
+
+
+
+
 #refresh_binance_symbols()
 
-#q.update_symbol_config('BTCAUD',1,True)
+
 
