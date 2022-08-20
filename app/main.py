@@ -1,9 +1,10 @@
 from fastapi import FastAPI, status, HTTPException
 from app import config
 from pydantic import BaseModel
-import refresh_binance_symbols
+import refresh_binance_symbols as sym
 import csv
-
+import os, sys
+sys.path.insert(1, os.path)
 
 app = FastAPI()
 
@@ -42,7 +43,7 @@ def get_ranged_historical_data(new_post: historicaldata_post):
 
 @app.get("/update/symbols")
 def refresh_symbols():
-    refresh_binance_symbols()
+    sym.refresh_binance_symbols()
     return ("Symbols refreshed") # return number of new symbols
 
 

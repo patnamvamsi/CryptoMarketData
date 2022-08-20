@@ -51,14 +51,13 @@ def connect():
     conn = None
     try:
         # read connection parameters
-        #params = config()
 
         # connect to the Timescaledb server
         print('Connecting to the Timescaledb database...')
         conn = psycopg2.connect(
             host=cfg.TIMESCALE_HOST,
-            database=cfg.TIMESCALE_DATABASE,
-            user=cfg.TIMESCALE_USER,
+            database=cfg.TIMESCALE_MARKET_DATA_DB,
+            user=cfg.TIMESCALE_USERNAME,
             password=cfg.TIMESCALE_PASSWORD)
 
         # create a cursor

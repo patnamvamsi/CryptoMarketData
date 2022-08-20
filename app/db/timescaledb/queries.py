@@ -146,7 +146,28 @@ def update_binance_symbols(df):
         '''
 
     insert_sql = '''INSERT INTO binance_symbols 
-    SELECT * FROM temp_binance_symbols WHERE
+    SELECT symbol,
+status,
+baseasset,
+baseassetprecision,
+quoteasset,
+quoteprecision,
+quoteassetprecision,
+basecommissionprecision,
+quotecommissionprecision,
+ordertypes,
+icebergallowed,
+ocoallowed,
+quoteorderqtymarketallowed,
+allowtrailingstop,
+isspottradingallowed,
+ismargintradingallowed,
+filters,
+permissions,
+priority,
+active,
+version,
+last_updated FROM temp_binance_symbols WHERE
     symbol NOT IN (SELECT symbol from binance_symbols)'''
 
     drop_temp_table = 'DROP TABLE temp_binance_symbols'
