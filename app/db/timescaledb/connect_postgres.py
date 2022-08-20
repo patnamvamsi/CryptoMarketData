@@ -2,6 +2,7 @@ from psycopg2 import pool
 import psycopg2
 from app.config import config as cfg
 
+
 class Database:
     __connection_pool = None
 
