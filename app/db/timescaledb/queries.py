@@ -1,7 +1,10 @@
+import datetime
+
 import sqlalchemy
 from sqlalchemy import create_engine
 from app.config import config as cfg
 import pandas as pd
+
 
 def create_kline_temp_table():
     """
@@ -27,7 +30,6 @@ def create_kline_temp_table():
 
 
 def truncate_temp_kline_table():
-
     query = "TRUNCATE TABLE temp_kline_binance"
     return query
 
@@ -80,6 +82,7 @@ def check_if_table_exists(symbol, kline_interval):
     """
     return query, table_name
 
+
 def load_kline_temp_to_main(symbol, kline_interval):
     """
     Loads kline data from temp table to main table.
@@ -105,6 +108,7 @@ def load_kline_temp_to_main(symbol, kline_interval):
     """
     return query, table_name
 
+
 def create_sqlalchemy_engine_conn():
     ts_engine = create_engine('postgresql://' + cfg.TIMESCALE_USERNAME + ':' +
                               cfg.TIMESCALE_PASSWORD + '@' +
@@ -113,8 +117,37 @@ def create_sqlalchemy_engine_conn():
                               cfg.TIMESCALE_MARKET_DATA_DB)
     return ts_engine
 
-def update_binance_symbols(df):
 
+def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
+    table_name = get_table_name(symbol, kline)
+    ts_engine = create_sqlalchemy_engine_conn()
+    db = ts_engine.connect()
+    meta = sqlalchemy.MetaData()
+    kline_table = sqlalchemy.Table(table_name, meta, autoload=True, autoload_with=ts_engine)
+    kline_table_ins = kline_table.insert()
+
+    fields = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume",
+              "trades", "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore"]
+
+    candle_sticks = [[datetime.datetime.fromtimestamp(row[0] / 1000),
+                      float(row[1]),
+                      float(row[2]),
+                      float(row[3]),
+                      float(row[4]),
+                      float(row[5]),
+                      datetime.datetime.fromtimestamp(row[6] / 1000),
+                      float(row[7]),
+                      float(row[8]),
+                      float(row[9]),
+                      float(row[10]),
+                      float(row[11])
+                      ] for row in candle_sticks]
+    xs = [{k: v for k, v in zip(fields, row)} for row in candle_sticks]
+
+    db.execute(kline_table_ins, xs)
+
+
+def update_binance_symbols(df):
     ts_engine = create_sqlalchemy_engine_conn()
 
     df.to_sql('temp_binance_symbols', ts_engine, if_exists='replace', dtype=
@@ -177,12 +210,11 @@ last_updated FROM temp_binance_symbols WHERE
         conn.execute(insert_sql)
         conn.execute(drop_temp_table)
 
-    return 0 # return row count
+    return 0  # return row count
 
 
-def update_symbol_config(symbol,priority,activate):
-
-    ts_engine  = create_sqlalchemy_engine_conn()
+def update_symbol_config(symbol, priority, activate):
+    ts_engine = create_sqlalchemy_engine_conn()
 
     sql = f"""
     UPDATE binance_symbols
@@ -197,10 +229,24 @@ def update_symbol_config(symbol,priority,activate):
         conn.execute(sql)
 
 
+def get_max_timestamp(table):
+    ts_engine = create_sqlalchemy_engine_conn()
+
+    sql = f"""
+    SELECT max(close_time)
+    FROM {table}"""
+
+    with ts_engine.begin() as conn:
+        rs = conn.execute(sql)
+
+    if rs.returns_rows == True:
+        for row in rs:
+            return row[0]
+    return None
+
 
 def get_active_symbols(active=True):
-
-    ts_engine  = create_sqlalchemy_engine_conn()
+    ts_engine = create_sqlalchemy_engine_conn()
     sql = f"""
     SELECT symbol from binance_symbols
     WHERE active = {active}"""

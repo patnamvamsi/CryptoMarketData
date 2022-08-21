@@ -1,4 +1,4 @@
-from config import config
+from app.config import config
 from binance import ThreadedWebsocketManager
 
 api_key = config.API_KEY
