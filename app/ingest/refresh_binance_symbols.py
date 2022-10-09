@@ -1,7 +1,7 @@
-from config import config as cfg
+from app.config import config as cfg
 import pandas as pd
 from binance.client import Client
-from db.timescaledb import queries as q
+from app.db.timescaledb import queries as q
 
 
 def refresh_binance_symbols():
@@ -28,6 +28,8 @@ def set_symbol_priority(symbol, priority, activate = True):
 
 
 #refresh_binance_symbols()
+
+
 
 
 

@@ -11,7 +11,12 @@ import connect_binance
 class BinanceDownloader(cb.BinanceData):
 
     def __init__(self):
+        super().__init__()
         self.data_root_dir = config.DATA_ROOT_DIR
+        self.exchange = 'binance'
+        self.kline = Client.KLINE_INTERVAL_1MINUTE
+        # start_time is considered as 01-01-2010 epoch equivalent  = 1262304000000
+        self.BEGIN_OF_THE_TIME = 1262304000
 
     def _write_ticker_to_file(self, symbol, start_ticker_time, end_date):
         start_date = datetime.datetime.fromtimestamp(start_ticker_time)

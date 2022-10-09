@@ -1,7 +1,7 @@
 from fastapi import FastAPI, status, HTTPException
 from app import config
 from pydantic import BaseModel
-import refresh_binance_symbols as sym
+from app.ingest import refresh_binance_symbols as sym
 import csv
 import os, sys
 

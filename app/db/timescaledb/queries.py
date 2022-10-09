@@ -119,23 +119,25 @@ def create_sqlalchemy_engine_conn():
 
 
 def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
-    table_name = get_table_name(symbol, kline)
+
+    temp_table = 'temp_kline_binance'
     ts_engine = create_sqlalchemy_engine_conn()
     db = ts_engine.connect()
+    db.execute(truncate_temp_kline_table())
     meta = sqlalchemy.MetaData()
-    kline_table = sqlalchemy.Table(table_name, meta, autoload=True, autoload_with=ts_engine)
+    kline_table = sqlalchemy.Table(temp_table, meta, autoload=True, autoload_with=ts_engine)
     kline_table_ins = kline_table.insert()
 
     fields = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume",
               "trades", "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore"]
 
-    candle_sticks = [[datetime.datetime.fromtimestamp(row[0] / 1000),
+    candle_sticks = [[row[0] / 1000,
                       float(row[1]),
                       float(row[2]),
                       float(row[3]),
                       float(row[4]),
                       float(row[5]),
-                      datetime.datetime.fromtimestamp(row[6] / 1000),
+                      row[6] / 1000,
                       float(row[7]),
                       float(row[8]),
                       float(row[9]),
@@ -145,7 +147,8 @@ def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
     xs = [{k: v for k, v in zip(fields, row)} for row in candle_sticks]
 
     db.execute(kline_table_ins, xs)
-
+    query, table_name = load_kline_temp_to_main(symbol, kline)
+    db.execute(query)
 
 def update_binance_symbols(df):
     ts_engine = create_sqlalchemy_engine_conn()
