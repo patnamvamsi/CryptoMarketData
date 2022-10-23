@@ -1,7 +1,16 @@
-from fastapi import FastAPI, status, HTTPException
+import asyncio
+import concurrent
+import time
+from multiprocessing import Process
+
+from fastapi import FastAPI, status, HTTPException, BackgroundTasks
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from app import config
 from pydantic import BaseModel
-from app.ingest import refresh_binance_symbols as sym
+from app.ingest import manage_binance_symbols as sym
+from app.ingest import historical_data_to_db as h
+from stream.get_streaming_kline import StreamKLineData
 import csv
 import os, sys
 
@@ -21,6 +30,26 @@ class historicaldata_post(BaseModel):
 @app.get("/")
 def landing():
     return "welcome to the crypto market data module"
+
+
+def stream_kline_data():
+    stream_market_data = StreamKLineData()
+    print ("Started thread")
+    stream_market_data.main()
+
+
+def fetch_historical_data():
+    print("Fetching historical data")
+    h.BinanceDownloader().fetch_all_historical_data()
+    print("Finished Fetching historical data")
+
+
+@app.on_event('startup')
+def app_startup():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(fetch_historical_data)
+    scheduler.add_job(stream_kline_data)
+    scheduler.start()
 
 
 @app.get("/symbol/{sym}")
@@ -51,6 +80,13 @@ def refresh_symbols():
     sym.refresh_binance_symbols()
     return "Symbols refreshed"  # return number of new symbols
 
+
+@app.get("/update/marketdata/{symbol}")
+def update_market_data(symbol: str):
+    c = h.BinanceDownloader()
+    return c.fetch_historical_data(symbol)
+
+# BinanceDownloader()._fetch_all_historical_data() -- to update all active symbols
 
 '''
 apis:

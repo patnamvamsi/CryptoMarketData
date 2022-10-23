@@ -149,6 +149,7 @@ def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
     db.execute(kline_table_ins, xs)
     query, table_name = load_kline_temp_to_main(symbol, kline)
     db.execute(query)
+    #print("inserted into:" + table_name)
 
 def update_binance_symbols(df):
     ts_engine = create_sqlalchemy_engine_conn()
@@ -252,7 +253,7 @@ def get_active_symbols(active=True):
     ts_engine = create_sqlalchemy_engine_conn()
     sql = f"""
     SELECT symbol from binance_symbols
-    WHERE active = {active}"""
+    WHERE active = {active} order by  priority"""
 
     with ts_engine.begin() as conn:
         ResultProxy = conn.execute(sql)
