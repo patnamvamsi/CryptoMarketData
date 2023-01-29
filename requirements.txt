@@ -10,3 +10,4 @@ requests
 apscheduler
 binance~=0.3
 pydantic~=1.8.2
+fxcmpy
