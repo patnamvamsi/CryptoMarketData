@@ -2,6 +2,7 @@ from psycopg2 import pool
 import psycopg2
 from app.config import config as cfg
 
+
 class Database:
     __connection_pool = None
 
@@ -83,3 +84,9 @@ def connect():
 
 if __name__ == '__main__':
     connect()
+
+
+#psql -x "postgres://tsdbadmin:password@192.168.0.101:5432/tsdb?sslmode=require"
+#psql -U postgres -h 192.168.0.101
+
+#\COPY xrpaud FROM sample.csv CSV;

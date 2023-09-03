@@ -1,7 +1,7 @@
 import os
-from db.timescaledb import connect_postgres as tscdb
-from db.timescaledb import queries as qry
-from config import config as cfg
+from app.db.timescaledb import connect_postgres as tscdb
+from app.db.timescaledb import queries as qry
+from app.config import config as cfg
 from binance.client import Client
 
 
@@ -40,7 +40,7 @@ def load_csv_to_db(root_dir, kline_intervel,delimiter=','):
                         query, table_name = qry.load_kline_temp_to_main(symbol, kline_interval)
                         load_into_main_and_truncate_temp(query, table_name)
 
-                # Archive the loaded files
+                # Archive the loaded ingest
 
 
 def load_into_main_and_truncate_temp(query, table_name):
@@ -55,6 +55,7 @@ def load_into_main_and_truncate_temp(query, table_name):
         return False
 
     return True
+
 
 def load_file_to_temp_table(filename):
     try:
@@ -96,6 +97,7 @@ def create_table_if_not_exists(symbol, kline_interval):
         else:
             print("Table {} already exists".format(table_name))
             return table_name
+
 
 def initiate_market_data_conn(  ):
     tscdb.Database.initialise(database=cfg.TIMESCALE_MARKET_DATA_DB, user=cfg.TIMESCALE_USERNAME,
@@ -140,7 +142,7 @@ def load_csv_symbol_to_db(root_dir, kline_intervel,delimiter=','):
                         query, table_name = qry.load_kline_temp_to_main(symbol, kline_interval)
                         load_into_main_and_truncate_temp(query, table_name)
 
-                # Archive the loaded files
+                # Archive the loaded ingest
 
 #load_csv_to_db(cfg.DATA_ROOT_DIR,Client.KLINE_INTERVAL_1DAY)
 #load_csv_symbol_to_db("/media/vamsi/Elements 8TB/crypto/binance_historical_data/1minute/",Client.KLINE_INTERVAL_1MINUTE)
