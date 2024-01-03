@@ -5,7 +5,6 @@ from sqlalchemy import create_engine
 from app.config import config as cfg
 import pandas as pd
 
-
 def create_kline_temp_table():
     """
     Creates a temporary table to store kline data.
@@ -36,7 +35,7 @@ def truncate_temp_kline_table():
 
 def create_kline_binance_table(symbol, kline_interval):
     """
-    Creates a temporary table to store kline data.
+    Creates a table to store kline data.
     """
     table_name = get_table_name(symbol, kline_interval)
     query = f"""create table {table_name}
@@ -260,3 +259,31 @@ def get_active_symbols(active=True):
         symbol_list = pd.DataFrame(ResultProxy.fetchall())[0].values
 
     return symbol_list
+
+
+def create_table_if_not_exists(symbol, kline_interval):
+    """
+    Creates a table in the TimescaleDB database if it does not exist.
+
+    :param table_name: The name of the table to create.
+    :param column_names: The names of the columns to create in the table.
+    :return: None
+    """
+    ts_engine = create_sqlalchemy_engine_conn()
+
+    #check if table exists
+    query, table_name = check_if_table_exists (symbol, kline_interval)
+
+    with ts_engine.begin() as conn:
+        rs = conn.execute(query)
+
+        if rs.fetchone()[0] == False:
+            #create table if it does not exist
+            query,table_name = create_kline_binance_table(symbol, kline_interval)
+            with ts_engine.begin() as conn:
+                rs = conn.execute(query)
+                print("Created table {}".format(table_name))
+                return table_name
+        else:
+            print("Table {} already exists".format(table_name))
+            return table_name
