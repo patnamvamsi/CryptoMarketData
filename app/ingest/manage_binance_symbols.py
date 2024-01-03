@@ -1,10 +1,10 @@
 from app.config import config as cfg
 import pandas as pd
 from binance.client import Client
-from app.db.timescaledb import queries as q
+from app.db.timescaledb import crud as q
 
 
-def refresh_binance_symbols():
+def refresh_binance_symbols(session):
 
     client = Client(cfg.API_KEY, cfg.API_SECRET)
     symbol_list = client.get_exchange_info()
@@ -15,11 +15,11 @@ def refresh_binance_symbols():
     df['last_updated'] = pd.to_datetime('now')
     df.set_index('symbol', inplace=True)
     df.columns = df.columns.str.lower()
-    q.update_binance_symbols(df)
+    q.update_binance_symbols(df, session)
 
 
-def set_symbol_priority(symbol, priority, activate=True):
-    q.update_symbol_config(symbol, priority, activate)
+def set_symbol_priority(symbol, priority, session, activate=True):
+    q.update_symbol_config(symbol, priority, activate, session)
     return("Success")
 
 

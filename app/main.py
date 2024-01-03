@@ -13,11 +13,12 @@ from app.ingest import historical_data_to_db as h
 from stream.get_streaming_kline import StreamKLineData
 import csv
 import os, sys
+from app.db.timescaledb import timescaledb_connect  as c
 
 sys.path.insert(1, os.path)
 
 app = FastAPI()
-
+session_pool = c.get_session_pool()
 
 # pydantic semantic checks for the historical model
 class historicaldata_post(BaseModel):
@@ -32,61 +33,71 @@ def landing():
     return "welcome to the crypto market data module"
 
 ''' The current issue with streaming is:
-    by the time the historical data procedure starts and finishes fetching data,
+    by the time the historical data fetch procedure  finishes fetching data,
     it takes few minutes, and it causes break between historical and streaming data. '''
 def stream_kline_data():
-    stream_market_data = StreamKLineData()
+    session = session_pool()
+    stream_market_data = StreamKLineData(session)
     print ("Started thread")
     stream_market_data.main()
 
-
+@app.get("/historicaldata")
 def fetch_historical_data():
     print("Fetching historical data")
-    h.BinanceDownloader().fetch_all_historical_data()
+    hist_session = session_pool()
+    h.BinanceDownloader(hist_session).fetch_all_historical_data()
+    hist_session.close()
     print("Finished Fetching historical data")
+
+
+@app.get("/historicalgapdata")
+def fetch_historical_gap_data():
+    print("Fetching historical kline gap data")
+    gap_session = session_pool()
+    h.BinanceDownloader(gap_session).fetch_all_gap_historical_data()
+    gap_session.close()
+    print("Finished Fetching historical kline gap data")
 
 
 @app.on_event('startup')
 def app_startup():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(fetch_historical_data)
-    #scheduler.add_job(stream_kline_data)  
+    scheduler.add_job(stream_kline_data)
+    #scheduler.add_job(fetch_historical_data)
+    scheduler.add_job(fetch_historical_gap_data)
     scheduler.start()
-
-
-@app.get("/symbol/{sym}")
-def get_full_historical_data(sym: str):
-    try:
-        f = config.DATA_ROOT_DIR + "1day\\" + sym + "\\" + "XRPAUD_01-Jan-2010_20-Sep-2021"
-        with open(f, newline='') as f:
-            reader = csv.reader(f)
-            data = list(reader)
-    except:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-    return data
 
 
 @app.get("/symbol/{sym}/from/{start_date}/to/{end_date}")
 def get_ranged_historical_data(sym: str, start_date: str, end_date: str):
+    # Yet to be implemented
     return sym + start_date + end_date
 
 
-@app.post("/historicaldata")
-def get_ranged_historical_data(new_post: historicaldata_post):
-    print(new_post)
+@app.post("/activatesymbol/{symbol}/{priority}/{state}")
+def update_symbol_status(symbol: str, priority: str, state: str,):
+    bool = True if state.upper() == "TRUE" else False
+    session = session_pool()
+    sym.set_symbol_priority(symbol, int(priority), session, bool)
+    session.close()
     return "Successful"
 
 
 @app.get("/update/symbols")
 def refresh_symbols():
-    sym.refresh_binance_symbols()
+    session = session_pool()
+    sym.refresh_binance_symbols(session)
+    session.close()
     return "Symbols refreshed"  # return number of new symbols
 
 
 @app.get("/update/marketdata/{symbol}")
 def update_market_data(symbol: str):
-    c = h.BinanceDownloader()
-    return c.fetch_historical_data(symbol)
+    mkt_data_session = session_pool()
+    c = h.BinanceDownloader(mkt_data_session)
+    msg = c.fetch_recent_historical_data(symbol)
+    mkt_data_session.close()
+    return msg
 
 
 '''
@@ -103,4 +114,4 @@ HTTP_202_ACCEPTED = 202  -- for batch processing
 https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 '''
 
-''' iki When to use get and when to use post'''
+''' iki '''

@@ -1,7 +1,7 @@
 from app.config import config
 from binance import ThreadedWebsocketManager
 from binance import Client
-import app.db.timescaledb.queries as q
+import app.db.timescaledb.crud as q
 from app.ingest import historical_data_to_db as h
 
 
@@ -13,18 +13,19 @@ class StreamKLineData:
     ''' Refactor later to handle multiple type of streams
      and to cater to multiple symbols in a distributed env'''
 
-    def __init__(self):
-        self.symbols = q.get_active_symbols(True)
+    def __init__(self, session):
+        self.session = session
+        self.symbols = q.get_active_symbols(self.session, True)
         self.stream = []
         self.build_stream_names()
-        # fill up the previous gaps and then start the stream
 
+        # fill up the latest gaps and then start the stream
 
-        '''
-        c = h.BinanceDownloader().fetch_all_historical_data()
+        c = h.BinanceDownloader(session)
+        c.fetch_all_historical_data()
         for symbol in self.symbols:
-            c.fetch_historical_data(symbol.lower())
-        '''
+            c.fetch_recent_historical_data(symbol.lower())
+
 
     def build_stream_names(self):
         # other streams: https://binance-docs.github.io/apidocs/futures/en/#individual-symbol-mini-ticker-stream
@@ -32,6 +33,7 @@ class StreamKLineData:
             self.stream.append(symbol.lower() + '@kline_' + Client.KLINE_INTERVAL_1MINUTE)
         print(str(self.stream) + " Subscribed")
         return self.stream
+
 
     def main(self):
         kline = Client.KLINE_INTERVAL_1MINUTE
@@ -46,7 +48,7 @@ class StreamKLineData:
             if msg['e'] == 'kline':
                 symbol, candle_stick = convert_to_candle_stick(msg)
                 print(symbol, candle_stick)
-                q.insert_kline_rows(symbol, kline, candle_stick)
+                q.insert_kline_rows(symbol, kline, candle_stick, self.session)
 
         def convert_to_candle_stick(msg):
             symbol = msg['s']

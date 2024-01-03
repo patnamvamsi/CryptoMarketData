@@ -1,7 +1,8 @@
 from app.config import config
 from binance.client import Client
 import datetime
-
+import traceback
+import pytz
 
 class BinanceData:
 
@@ -9,12 +10,17 @@ class BinanceData:
         self.client = Client(config.API_KEY, config.API_SECRET)
 
     def get_kline_data(self, symbol, kline, start_ticker_time, end_ticker_time):
-        start_date = datetime.datetime.fromtimestamp(start_ticker_time)
-        end_date = datetime.datetime.fromtimestamp(end_ticker_time)
+        start_date = datetime.datetime.fromtimestamp(start_ticker_time, pytz.timezone("UTC"))
+        end_date = datetime.datetime.fromtimestamp(end_ticker_time, pytz.timezone("UTC"))
         try:
-            candlesticks = self.client.get_historical_klines(symbol.upper(), kline, str(start_ticker_time), str(end_ticker_time))
+            #candlesticks = self.client.get_historical_klines(symbol.upper(), kline, str(start_ticker_time), str(end_ticker_time))
+            candlesticks = self.client.get_historical_klines(symbol.upper(), kline, str(start_date),
+                                                             str(end_date))
+            print("Received {} kline candlesticks".format(len(candlesticks)))
         except Exception as ex:
             print("Error getting historical klines for symbol:" + symbol + str(ex))
+            traceback.print_exception(type(ex), ex, ex.__traceback__)
+
         return candlesticks
 
     def _get_symbols(self):

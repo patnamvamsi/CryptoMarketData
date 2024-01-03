@@ -1,6 +1,6 @@
 import os
 from app.db.timescaledb import connect_postgres as tscdb
-from app.db.timescaledb import queries as qry
+from app.db.timescaledb import crud as qry
 from app.config import config as cfg
 from binance.client import Client
 

@@ -1,4 +1,5 @@
 import datetime
+import traceback
 
 import sqlalchemy
 from sqlalchemy import create_engine
@@ -95,7 +96,7 @@ def load_kline_temp_to_main(symbol, kline_interval):
         low,
         close,
         volume ,
-        to_timestamp(close_time/1000),
+        to_timestamp(close_time),
         quote_asset_volume,
         trades,
         taker_buy_base_asset_volume,
@@ -117,14 +118,12 @@ def create_sqlalchemy_engine_conn():
     return ts_engine
 
 
-def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
+def insert_kline_rows(symbol, kline, candle_sticks, session): # handle duplicate values
 
     temp_table = 'temp_kline_binance'
-    ts_engine = create_sqlalchemy_engine_conn()
-    db = ts_engine.connect()
-    db.execute(truncate_temp_kline_table())
-    meta = sqlalchemy.MetaData()
-    kline_table = sqlalchemy.Table(temp_table, meta, autoload=True, autoload_with=ts_engine)
+    meta = sqlalchemy.MetaData(bind=session.bind)
+    session.execute(truncate_temp_kline_table())
+    kline_table = sqlalchemy.Table(temp_table, meta, autoload=True)
     kline_table_ins = kline_table.insert()
 
     fields = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume",
@@ -144,13 +143,20 @@ def insert_kline_rows(symbol, kline, candle_sticks): # handle duplicate values
                       float(row[11])
                       ] for row in candle_sticks]
     xs = [{k: v for k, v in zip(fields, row)} for row in candle_sticks]
+    try:
+        session.execute(kline_table_ins, xs)
+        session.commit()
+        query, table_name = load_kline_temp_to_main(symbol, kline)
+        session.execute(query)
+        session.commit()
+    except Exception as ex:
+        print("Error " + symbol + str(ex))
+        traceback.print_exception(type(ex), ex, ex.__traceback__)
 
-    db.execute(kline_table_ins, xs)
-    query, table_name = load_kline_temp_to_main(symbol, kline)
-    db.execute(query)
-    #print("inserted into:" + table_name)
 
-def update_binance_symbols(df):
+    return
+
+def update_binance_symbols(df, session):
     ts_engine = create_sqlalchemy_engine_conn()
 
     df.to_sql('temp_binance_symbols', ts_engine, if_exists='replace', dtype=
@@ -208,16 +214,22 @@ last_updated FROM temp_binance_symbols WHERE
 
     drop_temp_table = 'DROP TABLE temp_binance_symbols'
 
-    with ts_engine.begin() as conn:  # TRANSACTION
-        conn.execute(update_sql)
-        conn.execute(insert_sql)
-        conn.execute(drop_temp_table)
+    try:
+
+        with ts_engine.begin() as conn:  # TRANSACTION
+            conn.execute(update_sql)
+            conn.execute(insert_sql)
+            conn.commit()
+            conn.execute(drop_temp_table)
+            conn.close()
+    except Exception as ex:
+        print("Error getting historical klines for symbol:" + symbol + str(ex))
+        traceback.print_exception(type(ex), ex, ex.__traceback__)
 
     return 0  # return row count
 
 
-def update_symbol_config(symbol, priority, activate):
-    ts_engine = create_sqlalchemy_engine_conn()
+def update_symbol_config(symbol, priority, activate, session):
 
     sql = f"""
     UPDATE binance_symbols
@@ -228,40 +240,39 @@ def update_symbol_config(symbol, priority, activate):
     last_updated = CURRENT_TIMESTAMP
     WHERE symbol = '{symbol}'"""
 
-    with ts_engine.begin() as conn:
-        conn.execute(sql)
+    try:
+        session.execute(sql)
+    except Exception as ex:
+        print("Error updating symbol:" + symbol + str(ex))
+        traceback.print_exception(type(ex), ex, ex.__traceback__)
+    return
 
 
-def get_max_timestamp(table):
-    ts_engine = create_sqlalchemy_engine_conn()
+def get_max_timestamp(table, session):
 
     sql = f"""
     SELECT max(close_time)
     FROM {table}"""
 
-    with ts_engine.begin() as conn:
-        rs = conn.execute(sql)
-
-    if rs.returns_rows == True:
+    rs = session.execute(sql)
+    if rs.returns_rows:
         for row in rs:
             return row[0]
     return None
 
 
-def get_active_symbols(active=True):
-    ts_engine = create_sqlalchemy_engine_conn()
+def get_active_symbols(session, active=True):
     sql = f"""
     SELECT symbol from binance_symbols
     WHERE active = {active} order by  priority"""
 
-    with ts_engine.begin() as conn:
-        ResultProxy = conn.execute(sql)
-        symbol_list = pd.DataFrame(ResultProxy.fetchall())[0].values
+    result_proxy = session.execute(sql)
+    symbol_list = pd.DataFrame(result_proxy.fetchall())[0].values
 
     return symbol_list
 
 
-def create_table_if_not_exists(symbol, kline_interval):
+def create_table_if_not_exists(symbol, kline_interval, session):
     """
     Creates a table in the TimescaleDB database if it does not exist.
 
@@ -269,21 +280,41 @@ def create_table_if_not_exists(symbol, kline_interval):
     :param column_names: The names of the columns to create in the table.
     :return: None
     """
-    ts_engine = create_sqlalchemy_engine_conn()
 
     #check if table exists
     query, table_name = check_if_table_exists (symbol, kline_interval)
+    rs = session.execute(query)
 
-    with ts_engine.begin() as conn:
-        rs = conn.execute(query)
+    # create table if it does not exist
+    if rs.fetchone()[0] == False:
+        query,table_name = create_kline_binance_table(symbol, kline_interval)
+        session.execute(query)
+        print("Created table {}".format(table_name))
+        return table_name
+    else:
+        print("Table {} already exists".format(table_name))
+        return table_name
 
-        if rs.fetchone()[0] == False:
-            #create table if it does not exist
-            query,table_name = create_kline_binance_table(symbol, kline_interval)
-            with ts_engine.begin() as conn:
-                rs = conn.execute(query)
-                print("Created table {}".format(table_name))
-                return table_name
-        else:
-            print("Table {} already exists".format(table_name))
-            return table_name
+
+def find_gaps_in_kline_data(symbol, kline_interval, session):
+    table_name = get_table_name(symbol, kline_interval)
+    query = f"""
+            WITH gaps AS (
+              SELECT
+                open_time AS gap_start,
+                LEAD(open_time) OVER (ORDER BY open_time) AS gap_end
+              FROM
+                {table_name}
+            )
+            SELECT
+              gap_start,
+              gap_end,
+              EXTRACT(EPOCH FROM (gap_end - gap_start)) AS gap_duration
+            FROM
+              gaps
+            WHERE
+              EXTRACT(EPOCH FROM (gap_end - gap_start)) > 120 -- 120 seconds = 2 minutes
+            ORDER BY 1 DESC;
+            """
+    rs = session.execute(query)
+    return rs
