@@ -9,7 +9,7 @@ import time
 
 
 #producer = KafkaProducer(bootstrap_servers='172.17.0.3:9092', api_version=(2,8,1))
-producer = KafkaProducer(bootstrap_servers='172.17.0.3:9092')
+producer = KafkaProducer(bootstrap_servers=['172.17.0.3:9092'])
 for _ in range(10):
     msg = 'loop '+str(_)
     producer.send('vamsi_test', bytes(msg.encode('utf-8')))
