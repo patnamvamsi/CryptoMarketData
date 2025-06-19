@@ -7,7 +7,7 @@ from kafka import KafkaProducer
 from kafka import KafkaConsumer
 import time
 
-
+'''
 #producer = KafkaProducer(bootstrap_servers='172.17.0.3:9092', api_version=(2,8,1))
 producer = KafkaProducer(bootstrap_servers=['172.17.0.3:9092'])
 for _ in range(10):
@@ -17,15 +17,15 @@ for _ in range(10):
     time.sleep(1)
 
 
-'''
+
 consumer = KafkaConsumer('vamsi_test',bootstrap_servers='localhost:9092')
 for msg in consumer:
     print(msg)
+
 '''
 
-
 consumer = KafkaConsumer(
-    'vamsi_test',
+    'MARKET_DATA',
      bootstrap_servers='172.17.0.3:9092',
      auto_offset_reset='earliest',
      enable_auto_commit=True,

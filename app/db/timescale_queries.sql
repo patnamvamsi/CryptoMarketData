@@ -231,3 +231,24 @@ FROM
   gaps
 WHERE
   EXTRACT(EPOCH FROM (gap_end - gap_start)) > 120; -- 120 seconds = 2 minutes
+
+drop table NSE_BHAV_COPY
+
+
+CREATE TABLE NSE_BHAV_COPY
+	(SYMBOL varchar null,
+	SERIES char(10) null,
+	DATE1 date null,
+	PREV_CLOSE float null,
+	OPEN_PRICE float null,
+	HIGH_PRICE float null,
+	LOW_PRICE float null,
+	LAST_PRICE float null,
+	CLOSE_PRICE float null,
+	AVG_PRICE float null,
+	TTL_TRD_QNTY bigint null,
+	TURNOVER_LACS float null,
+	NO_OF_TRADES bigint null,
+	DELIV_QTY bigint null,
+	DELIV_PER float null
+	)

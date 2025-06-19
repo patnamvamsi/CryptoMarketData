@@ -49,7 +49,8 @@ class StreamKLineData:
                 symbol, candle_stick = convert_to_candle_stick(msg)
                 print(symbol, candle_stick)
                 q.insert_kline_rows(symbol, kline, candle_stick, self.session)
-                self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, bytes(str(candle_stick).encode('utf-8')))
+                if STREAM_MARKET_DATA_KAFKA:
+                    self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, bytes(str(candle_stick).encode('utf-8')))
 
         def convert_to_candle_stick(msg):
             symbol = msg['s']
