@@ -10,7 +10,9 @@ def get_session_pool():
                                   cfg.TIMESCALE_PASSWORD + '@' +
                                   cfg.TIMESCALE_HOST + ':' +
                                   cfg.TIMESCALE_PORT + '/' +
-                                  cfg.TIMESCALE_MARKET_DATA_DB, pool_size=5, max_overflow=10)
+                                  cfg.TIMESCALE_MARKET_DATA_DB, pool_size=5, max_overflow=10,
+                           future=True
+                           )
 
 
     # Create a session factory

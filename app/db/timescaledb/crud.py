@@ -114,7 +114,8 @@ def create_sqlalchemy_engine_conn():
                               cfg.TIMESCALE_PASSWORD + '@' +
                               cfg.TIMESCALE_HOST + ':' +
                               cfg.TIMESCALE_PORT + '/' +
-                              cfg.TIMESCALE_MARKET_DATA_DB)
+                              cfg.TIMESCALE_MARKET_DATA_DB
+                              )
     return ts_engine
 
 
@@ -215,15 +216,15 @@ last_updated FROM temp_binance_symbols WHERE
     drop_temp_table = 'DROP TABLE temp_binance_symbols'
 
     try:
-
+        print("updating binance_symbols")
         with ts_engine.begin() as conn:  # TRANSACTION
             conn.execute(update_sql)
             conn.execute(insert_sql)
-            conn.commit()
+            conn.execute("commit")
             conn.execute(drop_temp_table)
             conn.close()
     except Exception as ex:
-        print("Error getting historical klines for symbol:" + symbol + str(ex))
+        print("Error updating binance_symbols table" + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
 
     return 0  # return row count

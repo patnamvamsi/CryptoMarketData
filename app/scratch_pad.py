@@ -64,7 +64,6 @@ print (create_staircase([1,2,3,4,5,6]))
 import os, sys
 sys.path.insert(1, os.path)
 #from ingest import manage_binance_symbols as sym
-print (sys.path)
 from app.db.timescaledb import timescaledb_connect  as c
 import app.ingest.manage_binance_symbols as sym
 session_pool = c.get_session_pool()
