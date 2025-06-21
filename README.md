@@ -21,7 +21,9 @@ Upcoming features:
 ## How to set up and run
 Prerequisites:
 1. Timescale DB installed and running.
-2. Run the initial setup script from app/db/timescaledb/scripts/setup_db.sql 
+2. Rename app/config/config_template.py to app/config/config.py and add relavant keys
+3. Run the initial setup script from app/db/timescaledb/scripts/setup_db.sql 
+4. Run intialise.py
 
 Steps to run as a service:
 cd <your_project_location>/CryptoMarketData/app/

@@ -16,7 +16,7 @@ class BinanceDownloader(cb.BinanceData):
         self.exchange = 'binance' #change this to extend for other exchanges
         self.kline = Client.KLINE_INTERVAL_1MINUTE
         # start_time is considered as 01-01-2010 epoch equivalent  = 1262304000000
-        self.BEGIN_OF_THE_TIME = 1262304000
+        self.BEGIN_OF_THE_TIME = config.START_OF_TIME
         self.session = session
 
     def update_kline_tables(self, symbol, start_time_epoch, end_time_epoch):
