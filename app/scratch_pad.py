@@ -1,11 +1,4 @@
-import collections
-import sys, os
-#sys.path.insert(1, os.getcwd()+"/../")
-import db.timescaledb.crud as q
-import  datetime
-from kafka import KafkaProducer
-from kafka import KafkaConsumer
-import time
+
 
 '''
 #producer = KafkaProducer(bootstrap_servers='172.17.0.3:9092', api_version=(2,8,1))
@@ -24,18 +17,19 @@ for msg in consumer:
 
 '''
 
-consumer = KafkaConsumer(
-    'MARKET_DATA',
-     bootstrap_servers='172.17.0.3:9092',
-     auto_offset_reset='earliest',
-     enable_auto_commit=True,
-    max_poll_records=100,
-)
+# consumer = KafkaConsumer(
+#     'MARKET_DATA',
+#      bootstrap_servers='172.17.0.3:9092',
+#      auto_offset_reset='earliest',
+#      enable_auto_commit=True,
+#     max_poll_records=100,
+# )
 
 
 
-for message in consumer:
-     print(message.value)
+
+# for message in consumer:
+#      print(message.value)
 
 
 '''
@@ -66,3 +60,16 @@ def create_staircase(nums):
 print (create_staircase([1,2,3,4,5,6]))
 
 '''
+
+import os, sys
+sys.path.insert(1, os.path)
+#from ingest import manage_binance_symbols as sym
+print (sys.path)
+from app.db.timescaledb import timescaledb_connect  as c
+import app.ingest.manage_binance_symbols as sym
+session_pool = c.get_session_pool()
+session = session_pool()
+
+
+
+sym.refresh_binance_symbols(session)

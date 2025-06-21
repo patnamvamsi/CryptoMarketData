@@ -10,7 +10,7 @@ from app import config
 from pydantic import BaseModel
 from app.ingest import manage_binance_symbols as sym
 from app.ingest import historical_data_to_db as h
-from stream.get_streaming_kline import StreamKLineData
+from app.stream.get_streaming_kline import StreamKLineData
 import csv
 import os, sys
 from app.db.timescaledb import timescaledb_connect  as c
