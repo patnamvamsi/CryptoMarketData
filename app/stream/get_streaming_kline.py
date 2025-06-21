@@ -3,20 +3,22 @@ from binance import ThreadedWebsocketManager
 from binance import Client
 import app.db.timescaledb.crud as q
 from app.ingest import historical_data_to_db as h
-
+from app.config.config import STREAM_MARKET_DATA_KAFKA, KAFKA_MARKET_DATA_TOPIC
+from app.kafka.kafka_utils import get_kafka_producer
 
 api_key = config.API_KEY
 api_secret = config.API_SECRET
 
 
 class StreamKLineData:
-    ''' Refactor later to handle multiple type of streams
+    ''' Refactor later to handle multiple sources of streams
      and to cater to multiple symbols in a distributed env'''
 
     def __init__(self, session):
         self.session = session
         self.symbols = q.get_active_symbols(self.session, True)
         self.stream = []
+        self.kafka_producer = get_kafka_producer() if STREAM_MARKET_DATA_KAFKA else None
         self.build_stream_names()
 
         # fill up the latest gaps and then start the stream
@@ -26,14 +28,12 @@ class StreamKLineData:
         for symbol in self.symbols:
             c.fetch_recent_historical_data(symbol.lower())
 
-
     def build_stream_names(self):
         # other streams: https://binance-docs.github.io/apidocs/futures/en/#individual-symbol-mini-ticker-stream
         for symbol in self.symbols:
             self.stream.append(symbol.lower() + '@kline_' + Client.KLINE_INTERVAL_1MINUTE)
         print(str(self.stream) + " Subscribed")
         return self.stream
-
 
     def main(self):
         kline = Client.KLINE_INTERVAL_1MINUTE
@@ -49,6 +49,8 @@ class StreamKLineData:
                 symbol, candle_stick = convert_to_candle_stick(msg)
                 print(symbol, candle_stick)
                 q.insert_kline_rows(symbol, kline, candle_stick, self.session)
+                if STREAM_MARKET_DATA_KAFKA:
+                    self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, bytes(str(candle_stick).encode('utf-8')))
 
         def convert_to_candle_stick(msg):
             symbol = msg['s']

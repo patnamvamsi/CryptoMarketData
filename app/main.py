@@ -14,11 +14,12 @@ from stream.get_streaming_kline import StreamKLineData
 import csv
 import os, sys
 from app.db.timescaledb import timescaledb_connect  as c
+from app.kafka.kafka_utils import initilaise_topics
 
 sys.path.insert(1, os.path)
-
 app = FastAPI()
 session_pool = c.get_session_pool()
+initilaise_topics()
 
 # pydantic semantic checks for the historical model
 class historicaldata_post(BaseModel):
@@ -32,9 +33,6 @@ class historicaldata_post(BaseModel):
 def landing():
     return "welcome to the crypto market data module"
 
-''' The current issue with streaming is:
-    by the time the historical data fetch procedure  finishes fetching data,
-    it takes few minutes, and it causes break between historical and streaming data. '''
 def stream_kline_data():
     session = session_pool()
     stream_market_data = StreamKLineData(session)
