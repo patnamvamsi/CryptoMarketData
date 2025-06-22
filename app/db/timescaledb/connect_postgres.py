@@ -1,6 +1,10 @@
 from psycopg2 import pool
 import psycopg2
 from app.config import config as cfg
+import logging
+from app.logger import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -54,7 +58,7 @@ def connect():
         # read connection parameters
 
         # connect to the Timescaledb server
-        print('Connecting to the Timescaledb database...')
+        logger.info('Connecting to the Timescaledb database...')
         conn = psycopg2.connect(
             host=cfg.TIMESCALE_HOST,
             database=cfg.TIMESCALE_MARKET_DATA_DB,
@@ -65,21 +69,21 @@ def connect():
         cur = conn.cursor()
 
         # execute a statement
-        print('Timescaledb database version:')
+        logger.info('Timescaledb database version:')
         cur.execute('SELECT version()')
 
         # display the Timescaledb database server version
         db_version = cur.fetchone()
-        print(db_version)
+        logger.info(db_version)
 
         # close the communication with the Timescaledb
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
-        print(error)
+        logger.error(error)
     finally:
         if conn is not None:
             conn.close()
-            print('Database connection closed.')
+            logger.info('Database connection closed.')
 
 
 if __name__ == '__main__':

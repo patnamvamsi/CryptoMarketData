@@ -5,6 +5,9 @@ import sqlalchemy
 from sqlalchemy import create_engine
 from app.config import config as cfg
 import pandas as pd
+import logging
+from app.logger import setup_logging
+logger = logging.getLogger(__name__)
 
 def create_kline_temp_table():
     """
@@ -151,7 +154,7 @@ def insert_kline_rows(symbol, kline, candle_sticks, session): # handle duplicate
         session.execute(query)
         session.commit()
     except Exception as ex:
-        print("Error " + symbol + str(ex))
+        logger.error("Error " + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
 
 
@@ -216,7 +219,7 @@ last_updated FROM temp_binance_symbols WHERE
     drop_temp_table = 'DROP TABLE temp_binance_symbols'
 
     try:
-        print("updating binance_symbols")
+        logger.info("updating binance_symbols")
         with ts_engine.begin() as conn:  # TRANSACTION
             conn.execute(update_sql)
             conn.execute(insert_sql)
@@ -224,7 +227,7 @@ last_updated FROM temp_binance_symbols WHERE
             conn.execute(drop_temp_table)
             conn.close()
     except Exception as ex:
-        print("Error updating binance_symbols table" + str(ex))
+        logger.error("Error updating binance_symbols table" + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
 
     return 0  # return row count
@@ -244,7 +247,7 @@ def update_symbol_config(symbol, priority, activate, session):
     try:
         session.execute(sql)
     except Exception as ex:
-        print("Error updating symbol:" + symbol + str(ex))
+        logger.error("Error updating symbol:" + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
     return
 
@@ -290,10 +293,10 @@ def create_table_if_not_exists(symbol, kline_interval, session):
     if rs.fetchone()[0] == False:
         query,table_name = create_kline_binance_table(symbol, kline_interval)
         session.execute(query)
-        print("Created table {}".format(table_name))
+        logger.info("Created table {}".format(table_name))
         return table_name
     else:
-        print("Table {} already exists".format(table_name))
+        logger.info("Table {} already exists".format(table_name))
         return table_name
 
 

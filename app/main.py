@@ -15,6 +15,10 @@ import csv
 import os, sys
 from app.db.timescaledb import timescaledb_connect  as c
 from app.kafka.kafka_utils import initilaise_topics
+from app.logger import setup_logging
+
+# Setup logging at the very start
+logger = setup_logging()
 
 sys.path.insert(1, os.path)
 app = FastAPI()
@@ -36,25 +40,25 @@ def landing():
 def stream_kline_data():
     session = session_pool()
     stream_market_data = StreamKLineData(session)
-    print ("Started thread")
+    logger.info("Started thread for streaming kline data")
     stream_market_data.main()
 
 @app.get("/historicaldata")
 def fetch_historical_data():
-    print("Fetching historical data")
+    logger.info("Fetching historical data")
     hist_session = session_pool()
     h.BinanceDownloader(hist_session).fetch_all_historical_data()
     hist_session.close()
-    print("Finished Fetching historical data")
+    logger.info("Finished Fetching historical data")
 
 
 @app.get("/historicalgapdata")
 def fetch_historical_gap_data():
-    print("Fetching historical kline gap data")
+    logger.info("Fetching historical kline gap data")
     gap_session = session_pool()
     h.BinanceDownloader(gap_session).fetch_all_gap_historical_data()
     gap_session.close()
-    print("Finished Fetching historical kline gap data")
+    logger.info("Finished Fetching historical kline gap data")
 
 
 @app.on_event('startup')

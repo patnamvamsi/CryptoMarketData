@@ -3,6 +3,10 @@ import csv
 from app.config import config as cfg
 import os
 import time
+import logging
+from app.logger import setup_logging
+
+logger = logging.getLogger(__name__)
 
 # Database connection parameters
 host = cfg.TIMESCALE_HOST
@@ -40,8 +44,8 @@ for file in files:
         try:
             cursor.copy_from(f, table_name, sep=',', null='')
         except Exception as e:
-            print("Error: " + file)
-            print("Error: " + str(e.with_traceback()))
+            logger.error("Error: " + file)
+            logger.error("Error: " + str(e.with_traceback()))
     conn.commit()
     if counter == 25:
         time.sleep(1)
@@ -51,4 +55,4 @@ for file in files:
 cursor.close()
 conn.close()
 
-print("CSV data has been successfully loaded into the table!")
+logger.info("CSV data has been successfully loaded into the table!")

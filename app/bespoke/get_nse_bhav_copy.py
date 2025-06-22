@@ -2,6 +2,10 @@
 from datetime import datetime
 import datetime as d
 import pandas as pd
+import logging
+from app.logger import setup_logging
+
+logger = logging.getLogger(__name__)
 
 #start_date = datetime.strptime(start_date, '%d-%m-%Y').date()
 #end_date = datetime.strptime(end_date, '%d-%m-%Y').date()
@@ -19,11 +23,11 @@ for dates in dates_list:
 
     try:
         bus_date = dates.strftime("%d-%m-%Y")
-        #print(bus_date)
+        #logger.info(bus_date)
         data = capital_market.bhav_copy_with_delivery(trade_date=bus_date)
         data.to_csv("/home/vamsi/Downloads//bhav_copy/bhav_copy_" + bus_date + ".csv", index=False)
     except Exception as e:
-        print ("Not Found:" + bus_date)
+        logger.error("Not Found:" + bus_date)
 
 
 '''
@@ -57,7 +61,7 @@ dates_list = [x.date() for x in date_range]
 #print(dates_list[0])
 for dates in dates_list:
     try:
-        print("dates: " + str(dates))
+        logger.info("dates: " + str(dates))
         bhavcopy_save(dates, savepath)
         time.sleep(randint(1 ,4)) # adding random delay of 1-4 seconds
     except (ConnectionError, ReadTimeoutError) as e:
@@ -66,9 +70,9 @@ for dates in dates_list:
             bhavcopy_save(dates, savepath)
             time.sleep(randint(1 ,4))
         except (ConnectionError, ReadTimeoutError) as e:
-            print(f'{dates}: File not Found')
+            logger.error(f'{dates}: File not Found')
     except(Exception) as er:
-        print(er)
+        logger.error(er)
         traceback.print_exc()
 
 '''

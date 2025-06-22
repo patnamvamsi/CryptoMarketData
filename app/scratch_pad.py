@@ -1,4 +1,6 @@
-
+import logging
+from app.logger import setup_logging
+logger = logging.getLogger(__name__)
 
 '''
 #producer = KafkaProducer(bootstrap_servers='172.17.0.3:9092', api_version=(2,8,1))
@@ -6,14 +8,14 @@ producer = KafkaProducer(bootstrap_servers=['172.17.0.3:9092'])
 for _ in range(10):
     msg = 'loop '+str(_)
     producer.send('vamsi_test', bytes(msg.encode('utf-8')))
-    print("Sent msg {}".format(msg))
+    logger.info("Sent msg {}".format(msg))
     time.sleep(1)
 
 
 
 consumer = KafkaConsumer('vamsi_test',bootstrap_servers='localhost:9092')
 for msg in consumer:
-    print(msg)
+    logger.info(msg)
 
 '''
 
@@ -29,7 +31,7 @@ for msg in consumer:
 
 
 # for message in consumer:
-#      print(message.value)
+#      logger.info(message.value)
 
 
 '''
@@ -60,3 +62,7 @@ def create_staircase(nums):
 print (create_staircase([1,2,3,4,5,6]))
 
 '''
+
+sym.refresh_binance_symbols(session)
+logger.info(sym.set_symbol_priority('BTCUSDT', 1, session))
+session.commit()

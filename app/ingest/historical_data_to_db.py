@@ -3,6 +3,11 @@ from binance import Client
 from app.config import config
 import datetime
 import app.db.timescaledb.crud as q
+import logging
+from app.logger import setup_logging
+
+# Setup logging at the very start
+logger = setup_logging()
 
 
 class BinanceDownloader(cb.BinanceData):
@@ -24,7 +29,7 @@ class BinanceDownloader(cb.BinanceData):
         if len(candle_sticks) > 0:
             q.insert_kline_rows(symbol, self.kline, candle_sticks, self.session)
         else:
-            print("No New data available")
+            logger.info("No New data available")
 
     def fetch_symbols(self):
         return q.get_active_symbols(self.session, True)
@@ -43,7 +48,7 @@ class BinanceDownloader(cb.BinanceData):
         q.create_table_if_not_exists(symbol, self.kline, self.session)
         start_time = self._get_most_recent_timestamp(symbol)
         end_time = datetime.datetime.now().timestamp()
-        print("Fetching: " + symbol + " Since: " + str(start_time) + " Till: "+ str(end_time)) #info
+        logger.info("Fetching: " + symbol + " Since: " + str(start_time) + " Till: "+ str(end_time)) #info
         self.update_kline_tables(symbol, start_time, end_time)
         return "Completed Fetching: " + symbol
 
@@ -51,7 +56,7 @@ class BinanceDownloader(cb.BinanceData):
     def fetch_gap_hostorical_data(self, symbol):
         rs = q.find_gaps_in_kline_data(symbol, self.kline, self.session)
         for row in rs:
-            print("Fetching: " + symbol + " Since: " + str(row.gap_start) + " Till: " + str(row.gap_end))  # info
+            logger.info("Fetching: " + symbol + " Since: " + str(row.gap_start) + " Till: " + str(row.gap_end))  # info
             self.update_kline_tables(symbol, row.gap_start.timestamp(), row.gap_end.timestamp())
 
     def _get_most_recent_timestamp(self, symbol):
