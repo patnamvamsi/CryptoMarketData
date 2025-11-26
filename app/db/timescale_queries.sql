@@ -94,27 +94,6 @@ SELECT NOT EXISTS (
    );
 
 
-CREATE TABLE IF NOT EXISTS binance_symbols (
-    symbol varchar(20),
-	priority int,
-	active char(1),
-	source text,
-	version int,
-	last_updated timestamptz
-);
-CREATE UNIQUE INDEX idx_binance_symbols ON binance_symbols(symbol);
-
-
-
-CREATE TABLE IF NOT EXISTS binance_symbols (
-    symbol varchar(20),
-	priority int,
-	active char(1),
-	source text,
-	version int,
-	last_updated timestamptz
-);
-
 --drop table binance_symbols;
 
 CREATE TABLE IF NOT EXISTS binance_symbols (

@@ -6,7 +6,10 @@ import requests
 import fxcmpy
 from fxcmpy import fxcmpy_tick_data_reader as tdr
 import os
+import logging
+from app.logger import setup_logging
 
+logger = logging.getLogger(__name__)
 
 years = [2020, 2021, 2022]
 weeks = list(range(53))
@@ -26,8 +29,8 @@ for symbol in symbols:
             with open(f"{directory}{symbol}_{year}_w{week}.csv.gz", 'wb') as file:
                 for chunk in r.iter_content(chunk_size=1024):
                     file.write(chunk)
-                    print("------")
-        print (f"{symbol}_{year}_w{week}")
+                    logger.info("------")
+        logger.info(f"{symbol}_{year}_w{week}")
 
 # Check all the files for each currency pair was downloaded (should be 104 for each)
 total = 0
@@ -37,5 +40,5 @@ for symbol in symbols:
         if file[:6] == symbol:
             count+=1
     total += count
-    print(f"{symbol} files downloaded = {count} ")
-print(f"\nTotal files downloaded = {total}")
+    logger.info(f"{symbol} files downloaded = {count} ")
+logger.info(f"\nTotal files downloaded = {total}")

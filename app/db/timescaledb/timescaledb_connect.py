@@ -2,6 +2,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.config import config as cfg
+import logging
+from app.logger import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def get_session_pool():
@@ -10,7 +14,9 @@ def get_session_pool():
                                   cfg.TIMESCALE_PASSWORD + '@' +
                                   cfg.TIMESCALE_HOST + ':' +
                                   cfg.TIMESCALE_PORT + '/' +
-                                  cfg.TIMESCALE_MARKET_DATA_DB, pool_size=5, max_overflow=10)
+                                  cfg.TIMESCALE_MARKET_DATA_DB, pool_size=5, max_overflow=10,
+                           future=True
+                           )
 
 
     # Create a session factory
@@ -24,7 +30,7 @@ def example_usage():
 
         session = Session()
         x = session.execute("SELECT symbol from binance_symbols    WHERE active ='true' order by  priority")
-        print(x.fetchall())
+        logger.info(x.fetchall())
         session.close()
 
 

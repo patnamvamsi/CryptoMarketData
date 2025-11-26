@@ -3,6 +3,10 @@ from binance.client import Client
 import datetime
 import traceback
 import pytz
+import logging
+from app.logger import setup_logging
+
+logger = logging.getLogger(__name__)
 
 class BinanceData:
 
@@ -16,9 +20,9 @@ class BinanceData:
             #candlesticks = self.client.get_historical_klines(symbol.upper(), kline, str(start_ticker_time), str(end_ticker_time))
             candlesticks = self.client.get_historical_klines(symbol.upper(), kline, str(start_date),
                                                              str(end_date))
-            print("Received {} kline candlesticks".format(len(candlesticks)))
+            logger.info("Received {} kline candlesticks".format(len(candlesticks)))
         except Exception as ex:
-            print("Error getting historical klines for symbol:" + symbol + str(ex))
+            logger.error("Error getting historical klines for symbol:" + symbol + str(ex))
             traceback.print_exception(type(ex), ex, ex.__traceback__)
 
         return candlesticks
@@ -30,7 +34,7 @@ class BinanceData:
             for tick in tickers:
                 symbols.append(tick['symbol'])
         except:
-            print("_get_symbols:" + "Error fetching ticker symbols")
+            logger.error("_get_symbols:" + "Error fetching ticker symbols")
         return symbols
 
 
