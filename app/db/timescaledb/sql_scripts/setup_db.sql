@@ -53,3 +53,31 @@ CREATE TABLE IF NOT EXISTS temp_kline_binance(
         ignore NUMERIC
     );
 
+
+CREATE TABLE IF NOT EXISTS binance_symbols (
+symbol varchar(20),
+status varchar(20),
+baseAsset varchar(20),
+baseAssetPrecision int,
+quoteAsset varchar(20),
+quotePrecision int,
+quoteAssetPrecision int,
+baseCommissionPrecision int,
+quoteCommissionPrecision int,
+orderTypes json,
+icebergAllowed  boolean,
+ocoAllowed boolean,
+quoteOrderQtyMarketAllowed  boolean,
+allowTrailingStop boolean,
+isSpotTradingAllowed  boolean,
+isMarginTradingAllowed  boolean,
+filters json,
+permissions json,
+priority int,
+active boolean,
+version int,
+last_updated timestamptz
+);
+
+CREATE UNIQUE INDEX idx_binance_symbols ON binance_symbols(symbol);
+
