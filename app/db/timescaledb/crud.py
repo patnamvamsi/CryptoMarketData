@@ -32,8 +32,17 @@ def create_kline_temp_table():
     return query
 
 
-def truncate_temp_kline_table():
-    query = "TRUNCATE TABLE temp_kline_binance"
+def truncate_temp_kline_table(exchange='binance'):
+    """
+    Generate query to truncate temporary kline table.
+
+    Args:
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        SQL query string
+    """
+    query = f"TRUNCATE TABLE temp_kline_{exchange}"
     return query
 
 
@@ -65,16 +74,35 @@ def create_kline_binance_table(symbol, kline_interval):
     return query, table_name
 
 
-def get_table_name(symbol, kline_interval):
-    table_name = "binance_" + f"{symbol.lower()}_kline_{kline_interval}"
+def get_table_name(symbol, kline_interval, exchange='binance'):
+    """
+    Generate table name for kline data.
+
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        Table name in format: {exchange}_{symbol}_kline_{interval}
+    """
+    table_name = f"{exchange}_{symbol.lower()}_kline_{kline_interval}"
     return table_name
 
 
-def check_if_table_exists(symbol, kline_interval):
+def check_if_table_exists(symbol, kline_interval, exchange='binance'):
     """
     Checks if a table exists.
+
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        Tuple of (query, table_name)
     """
-    table_name = get_table_name(symbol, kline_interval)
+    table_name = get_table_name(symbol, kline_interval, exchange)
     query = f"""
         SELECT EXISTS(
             SELECT 1
@@ -86,11 +114,20 @@ def check_if_table_exists(symbol, kline_interval):
     return query, table_name
 
 
-def load_kline_temp_to_main(symbol, kline_interval):
+def load_kline_temp_to_main(symbol, kline_interval, exchange='binance'):
     """
     Loads kline data from temp table to main table.
+
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        Tuple of (query, table_name)
     """
-    table_name = get_table_name(symbol, kline_interval)
+    table_name = get_table_name(symbol, kline_interval, exchange)
+    temp_table = f"temp_kline_{exchange}"
     query = f"""
         INSERT INTO {table_name}
         SELECT to_timestamp(open_time) ,
@@ -105,8 +142,8 @@ def load_kline_temp_to_main(symbol, kline_interval):
         taker_buy_base_asset_volume,
         taker_buy_quote_asset_volume,
         ignore
-        FROM temp_kline_binance	
-        ON CONFLICT (open_time) 
+        FROM {temp_table}
+        ON CONFLICT (open_time)
         DO NOTHING;
     """
     return query, table_name
@@ -122,11 +159,23 @@ def create_sqlalchemy_engine_conn():
     return ts_engine
 
 
-def insert_kline_rows(symbol, kline, candle_sticks, session): # handle duplicate values
+def insert_kline_rows(symbol, kline, candle_sticks, session, exchange='binance'): # handle duplicate values
+    """
+    Insert kline data into database using temporary table staging.
 
-    temp_table = 'temp_kline_binance'
+    Args:
+        symbol: Trading symbol
+        kline: Kline interval
+        candle_sticks: List of candle data
+        session: Database session
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        None
+    """
+    temp_table = f'temp_kline_{exchange}'
     meta = sqlalchemy.MetaData(bind=session.bind)
-    session.execute(truncate_temp_kline_table())
+    session.execute(truncate_temp_kline_table(exchange))
     kline_table = sqlalchemy.Table(temp_table, meta, autoload=True)
     kline_table_ins = kline_table.insert()
 
@@ -150,7 +199,7 @@ def insert_kline_rows(symbol, kline, candle_sticks, session): # handle duplicate
     try:
         session.execute(kline_table_ins, xs)
         session.commit()
-        query, table_name = load_kline_temp_to_main(symbol, kline)
+        query, table_name = load_kline_temp_to_main(symbol, kline, exchange)
         session.execute(query)
         session.commit()
     except Exception as ex:
@@ -276,23 +325,29 @@ def get_active_symbols(session, active=True):
     return symbol_list
 
 
-def create_table_if_not_exists(symbol, kline_interval, session):
+def create_table_if_not_exists(symbol, kline_interval, session, exchange='binance'):
     """
     Creates a table in the TimescaleDB database if it does not exist.
 
-    :param table_name: The name of the table to create.
-    :param column_names: The names of the columns to create in the table.
-    :return: None
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        session: Database session
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        table_name: Name of the created or existing table
     """
 
     #check if table exists
-    query, table_name = check_if_table_exists (symbol, kline_interval)
+    query, table_name = check_if_table_exists(symbol, kline_interval, exchange)
     rs = session.execute(query)
 
     # create table if it does not exist
     if rs.fetchone()[0] == False:
         query,table_name = create_kline_binance_table(symbol, kline_interval)
         session.execute(query)
+        session.commit()
         logger.info("Created table {}".format(table_name))
         return table_name
     else:
@@ -300,8 +355,20 @@ def create_table_if_not_exists(symbol, kline_interval, session):
         return table_name
 
 
-def find_gaps_in_kline_data(symbol, kline_interval, session):
-    table_name = get_table_name(symbol, kline_interval)
+def find_gaps_in_kline_data(symbol, kline_interval, session, exchange='binance'):
+    """
+    Find gaps in historical kline data.
+
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        session: Database session
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        ResultSet with gap information
+    """
+    table_name = get_table_name(symbol, kline_interval, exchange)
     query = f"""
             WITH gaps AS (
               SELECT
@@ -322,3 +389,145 @@ def find_gaps_in_kline_data(symbol, kline_interval, session):
             """
     rs = session.execute(query)
     return rs
+
+# ============================================================================
+# UNIFIED SYMBOLS TABLE FUNCTIONS (EXCHANGE-AGNOSTIC)
+# ============================================================================
+
+def get_active_symbols_unified(session, exchange=None, active=True):
+    """
+    Get active symbols from unified symbols table.
+
+    Args:
+        session: Database session
+        exchange: Exchange name (optional, None = all exchanges)
+        active: Filter by active status
+
+    Returns:
+        List of symbol strings
+    """
+    if exchange:
+        sql = f"""
+        SELECT symbol FROM symbols
+        WHERE exchange = '{exchange}' AND active = {active}
+        ORDER BY priority"""
+    else:
+        sql = f"""
+        SELECT exchange, symbol FROM symbols
+        WHERE active = {active}
+        ORDER BY exchange, priority"""
+
+    result_proxy = session.execute(sql)
+    rows = result_proxy.fetchall()
+
+    if exchange:
+        return [row[0] for row in rows]
+    else:
+        return [(row[0], row[1]) for row in rows]  # (exchange, symbol) tuples
+
+
+def upsert_symbol(symbol_dict, session):
+    """
+    Insert or update a symbol in the unified symbols table.
+
+    Args:
+        symbol_dict: Dict with keys: exchange, symbol, base_asset, quote_asset,
+                    status, priority, active, metadata
+        session: Database session
+
+    Returns:
+        None
+    """
+    import json
+
+    metadata_json = json.dumps(symbol_dict.get('metadata', {}))
+
+    sql = f"""
+    INSERT INTO symbols (exchange, symbol, base_asset, quote_asset, status, 
+                        priority, active, metadata, last_updated)
+    VALUES ('{symbol_dict['exchange']}', '{symbol_dict['symbol']}', 
+            '{symbol_dict.get('base_asset', '')}', '{symbol_dict.get('quote_asset', '')}', 
+            '{symbol_dict.get('status', 'UNKNOWN')}', {symbol_dict.get('priority', 9999)}, 
+            {symbol_dict.get('active', False)}, '{metadata_json}'::jsonb, CURRENT_TIMESTAMP)
+    ON CONFLICT (exchange, symbol)
+    DO UPDATE SET
+        base_asset = EXCLUDED.base_asset,
+        quote_asset = EXCLUDED.quote_asset,
+        status = EXCLUDED.status,
+        metadata = EXCLUDED.metadata,
+        last_updated = CURRENT_TIMESTAMP
+    """
+
+    try:
+        session.execute(sql)
+        session.commit()
+    except Exception as ex:
+        logger.error(f"Error upserting symbol {symbol_dict.get('symbol')}: {ex}")
+        traceback.print_exception(type(ex), ex, ex.__traceback__)
+        session.rollback()
+
+
+def update_symbol_status(exchange, symbol, priority, active, session):
+    """
+    Update symbol priority and active status in unified table.
+
+    Args:
+        exchange: Exchange name
+        symbol: Trading symbol
+        priority: Priority level (0-10)
+        active: Active status
+        session: Database session
+
+    Returns:
+        None
+    """
+    sql = f"""
+    UPDATE symbols
+    SET
+    priority = {priority},
+    active = {active},
+    last_updated = CURRENT_TIMESTAMP
+    WHERE exchange = '{exchange}' AND symbol = '{symbol}'"""
+
+    try:
+        session.execute(sql)
+        session.commit()
+    except Exception as ex:
+        logger.error(f"Error updating symbol status for {exchange}:{symbol}: {ex}")
+        traceback.print_exception(type(ex), ex, ex.__traceback__)
+        session.rollback()
+
+
+def get_symbol_by_exchange_and_name(exchange, symbol, session):
+    """
+    Get symbol details from unified table.
+
+    Args:
+        exchange: Exchange name
+        symbol: Trading symbol
+        session: Database session
+
+    Returns:
+        Dict with symbol details or None if not found
+    """
+    sql = f"""
+    SELECT exchange, symbol, base_asset, quote_asset, status, priority, active, metadata
+    FROM symbols
+    WHERE exchange = '{exchange}' AND symbol = '{symbol}'
+    """
+
+    result = session.execute(sql)
+    row = result.fetchone()
+
+    if row:
+        return {
+            'exchange': row[0],
+            'symbol': row[1],
+            'base_asset': row[2],
+            'quote_asset': row[3],
+            'status': row[4],
+            'priority': row[5],
+            'active': row[6],
+            'metadata': row[7]
+        }
+    return None

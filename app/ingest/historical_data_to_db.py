@@ -54,6 +54,7 @@ class BinanceDownloader(cb.BinanceData):
 
 
     def fetch_gap_hostorical_data(self, symbol):
+        q.create_table_if_not_exists(symbol, self.kline, self.session)
         rs = q.find_gaps_in_kline_data(symbol, self.kline, self.session)
         for row in rs:
             logger.info("Fetching: " + symbol + " Since: " + str(row.gap_start) + " Till: " + str(row.gap_end))  # info
