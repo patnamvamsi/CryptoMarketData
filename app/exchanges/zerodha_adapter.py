@@ -1,0 +1,604 @@
+"""
+Zerodha Exchange Adapter
+
+This module implements the BaseExchange interface for Zerodha/NSE stock exchange.
+It wraps the KiteConnect API client and provides a unified interface for market data operations.
+"""
+
+from typing import List, Dict, Any, Callable, Optional
+from datetime import datetime
+import logging
+import traceback
+import pytz
+import os
+
+from kiteconnect import KiteConnect, KiteTicker
+
+from .base_exchange import BaseExchange
+from app.config import config
+from app.models.market_data import Symbol, Kline
+
+logger = logging.getLogger(__name__)
+
+
+class ZerodhaAdapter(BaseExchange):
+    """
+    Zerodha/NSE exchange adapter implementation.
+
+    Provides access to Indian stock market data including:
+    - Instrument/symbol information (NSE, NFO, BSE)
+    - Historical candlestick data
+    - Real-time streaming via WebSocket (KiteTicker)
+
+    Note: Zerodha requires daily authentication with access token.
+    """
+
+    # File to store access token
+    ACCESS_TOKEN_FILE = "zerodha_access_token.txt"
+
+    def __init__(self, access_token: Optional[str] = None, request_token: Optional[str] = None):
+        """
+        Initialize Zerodha adapter with authentication.
+
+        Args:
+            access_token: Pre-generated access token (valid for 1 day)
+            request_token: Request token from login redirect (for generating access token)
+
+        Raises:
+            Exception: If authentication fails
+        """
+        super().__init__()
+        self._exchange_name = 'zerodha'
+
+        # Initialize KiteConnect client
+        try:
+            self.kite = KiteConnect(api_key=config.ZERODHA_API_KEY)
+            logger.info("KiteConnect client initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize KiteConnect client: {e}")
+            raise
+
+        # Handle authentication
+        if access_token:
+            # Use provided access token
+            self._set_and_validate_token(access_token)
+        elif request_token:
+            # Generate new access token from request token
+            access_token = self._generate_access_token(request_token)
+            self._set_and_validate_token(access_token)
+        else:
+            # Try to load from file
+            loaded_token = self._load_access_token()
+            if loaded_token:
+                try:
+                    self._set_and_validate_token(loaded_token)
+                except Exception as e:
+                    logger.warning(f"Saved access token invalid: {e}")
+                    raise Exception(
+                        "Zerodha access token expired or invalid. "
+                        "Please provide a valid access_token or request_token."
+                    )
+            else:
+                raise Exception(
+                    "No access token available. Please provide either:\n"
+                    "1. access_token (from previous session, valid for 1 day)\n"
+                    "2. request_token (from login redirect, to generate new access_token)"
+                )
+
+        # WebSocket ticker (lazy initialized)
+        self.kws: Optional[KiteTicker] = None
+        self._stream_callback: Optional[Callable] = None
+
+        # Instrument token cache: symbol -> token mapping
+        self._instrument_cache: Dict[str, int] = {}
+        self._token_to_symbol_cache: Dict[int, str] = {}
+
+    @property
+    def exchange_name(self) -> str:
+        """Return 'zerodha' as the exchange identifier."""
+        return self._exchange_name
+
+    def get_symbols(self, exchange: str = "NSE") -> List[Dict[str, Any]]:
+        """
+        Fetch all available instruments from Zerodha.
+
+        Args:
+            exchange: Exchange segment (NSE, NFO, BSE, etc.)
+
+        Returns:
+            List of normalized symbol dictionaries
+
+        Raises:
+            Exception: If API call fails
+        """
+        try:
+            # Fetch instruments for the specified exchange
+            instruments_raw = self.kite.instruments(exchange)
+
+            logger.info(f"Fetched {len(instruments_raw)} instruments from Zerodha {exchange}")
+
+            # Normalize each instrument and update cache
+            normalized_symbols = []
+            for instrument_data in instruments_raw:
+                normalized = self.normalize_symbol(instrument_data)
+                normalized_symbols.append(normalized)
+
+                # Update instrument token cache
+                symbol = instrument_data['tradingsymbol']
+                token = instrument_data['instrument_token']
+                self._instrument_cache[f"{exchange}:{symbol}"] = token
+                self._token_to_symbol_cache[token] = f"{exchange}:{symbol}"
+
+            return normalized_symbols
+
+        except Exception as e:
+            logger.error(f"Error fetching symbols from Zerodha {exchange}: {e}")
+            traceback.print_exception(type(e), e, e.__traceback__)
+            raise
+
+    def get_historical_data(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        exchange: str = "NSE"
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch historical candlestick data for a symbol.
+
+        Args:
+            symbol: Trading symbol (e.g., 'RELIANCE', 'INFY')
+            interval: Time interval (e.g., '1m', '5m', '1h', '1d')
+            start_time: Start datetime
+            end_time: End datetime
+            exchange: Exchange segment (default: 'NSE')
+
+        Returns:
+            List of normalized kline dictionaries
+
+        Raises:
+            Exception: If API call fails or symbol not found
+        """
+        try:
+            # Get instrument token for the symbol
+            instrument_token = self._get_instrument_token(symbol, exchange)
+
+            # Convert interval to Zerodha format
+            zerodha_interval = self._convert_interval(interval)
+
+            # Fetch historical data
+            candles = self.kite.historical_data(
+                instrument_token=instrument_token,
+                from_date=start_time,
+                to_date=end_time,
+                interval=zerodha_interval
+            )
+
+            logger.info(
+                f"Fetched {len(candles)} candles for {exchange}:{symbol} "
+                f"from {start_time} to {end_time}"
+            )
+
+            # Normalize each candle
+            normalized_klines = [
+                self.normalize_kline(candle, symbol, interval)
+                for candle in candles
+            ]
+
+            return normalized_klines
+
+        except Exception as e:
+            logger.error(
+                f"Error getting historical data for {exchange}:{symbol}: {e}"
+            )
+            traceback.print_exception(type(e), e, e.__traceback__)
+            raise
+
+    def start_streaming(
+        self,
+        symbols: List[str],
+        callback: Callable[[Dict[str, Any]], None],
+        exchange: str = "NSE"
+    ) -> None:
+        """
+        Start real-time WebSocket streaming for given symbols.
+
+        Args:
+            symbols: List of trading symbols
+            callback: Function to call with each tick update
+            exchange: Exchange segment (default: 'NSE')
+
+        Raises:
+            Exception: If streaming fails to start
+        """
+        try:
+            # Get instrument tokens for symbols
+            instrument_tokens = [
+                self._get_instrument_token(symbol, exchange)
+                for symbol in symbols
+            ]
+
+            logger.info(f"Starting Zerodha WebSocket for {len(symbols)} symbols")
+            logger.debug(f"Instrument tokens: {instrument_tokens}")
+
+            # Store callback for use in message handler
+            self._stream_callback = callback
+
+            # Initialize KiteTicker
+            self.kws = KiteTicker(
+                api_key=config.ZERODHA_API_KEY,
+                access_token=self.kite.access_token
+            )
+
+            # Define WebSocket event handlers
+            def on_ticks(ws, ticks):
+                """Process incoming tick data."""
+                try:
+                    for tick in ticks:
+                        # Normalize tick to kline format
+                        normalized_kline = self._normalize_tick(tick)
+                        # Call user callback
+                        self._stream_callback(normalized_kline)
+                except Exception as e:
+                    logger.error(f"Error processing tick: {e}")
+                    traceback.print_exception(type(e), e, e.__traceback__)
+
+            def on_connect(ws, response):
+                """Handle WebSocket connection."""
+                logger.info("Connected to Zerodha WebSocket")
+                # Subscribe to instruments with full mode
+                ws.subscribe(instrument_tokens)
+                ws.set_mode(ws.MODE_FULL, instrument_tokens)
+
+            def on_close(ws, code, reason):
+                """Handle WebSocket disconnection."""
+                logger.warning(f"Zerodha WebSocket closed: {code} - {reason}")
+                self._streaming_active = False
+
+            def on_error(ws, code, reason):
+                """Handle WebSocket errors."""
+                logger.error(f"Zerodha WebSocket error: {code} - {reason}")
+
+            # Set event handlers
+            self.kws.on_ticks = on_ticks
+            self.kws.on_connect = on_connect
+            self.kws.on_close = on_close
+            self.kws.on_error = on_error
+
+            # Connect (threaded mode)
+            self.kws.connect(threaded=True)
+            self._streaming_active = True
+
+            logger.info("Zerodha WebSocket streaming started successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to start Zerodha streaming: {e}")
+            self._streaming_active = False
+            raise
+
+    def stop_streaming(self) -> None:
+        """Stop active WebSocket streaming connection."""
+        try:
+            if self.kws:
+                logger.info("Stopping Zerodha WebSocket streaming")
+                self.kws.close()
+                self.kws = None
+                self._streaming_active = False
+                self._stream_callback = None
+                logger.info("Zerodha WebSocket streaming stopped")
+            else:
+                logger.warning("No active streaming to stop")
+
+        except Exception as e:
+            logger.error(f"Error stopping Zerodha streaming: {e}")
+            raise
+
+    def normalize_symbol(self, raw_instrument: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert Zerodha instrument format to unified format.
+
+        Args:
+            raw_instrument: Raw instrument data from Zerodha API
+
+        Returns:
+            Normalized symbol dictionary
+
+        Example Zerodha instrument:
+            {
+                'instrument_token': 408065,
+                'exchange_token': 1594,
+                'tradingsymbol': 'INFY',
+                'name': 'INFOSYS LIMITED',
+                'last_price': 0.0,
+                'expiry': '',
+                'strike': 0.0,
+                'tick_size': 0.05,
+                'lot_size': 1,
+                'instrument_type': 'EQ',
+                'segment': 'NSE',
+                'exchange': 'NSE'
+            }
+        """
+        return {
+            'exchange': 'zerodha',
+            'symbol': raw_instrument['tradingsymbol'],
+            'base_asset': raw_instrument.get('name', raw_instrument['tradingsymbol']),
+            'quote_asset': 'INR',  # NSE stocks are quoted in INR
+            'status': 'TRADING',  # Zerodha doesn't provide status
+            'priority': 9999,  # Default low priority
+            'active': False,   # Default inactive
+            'metadata': {
+                'instrument_token': raw_instrument['instrument_token'],
+                'exchange_token': raw_instrument['exchange_token'],
+                'segment': raw_instrument['segment'],
+                'exchange_raw': raw_instrument['exchange'],
+                'instrument_type': raw_instrument.get('instrument_type'),
+                'tick_size': raw_instrument.get('tick_size'),
+                'lot_size': raw_instrument.get('lot_size'),
+                'expiry': raw_instrument.get('expiry'),
+                'strike': raw_instrument.get('strike')
+            }
+        }
+
+    def normalize_kline(
+        self,
+        raw_candle: Any,
+        symbol: str,
+        interval: str
+    ) -> Dict[str, Any]:
+        """
+        Convert Zerodha candle format to unified format.
+
+        Args:
+            raw_candle: Raw candle data from Zerodha (dict format)
+            symbol: Trading symbol
+            interval: Time interval
+
+        Returns:
+            Normalized kline dictionary
+
+        Zerodha candle format:
+            {
+                'date': datetime.datetime(2023, 1, 1, 9, 15),
+                'open': 2500.0,
+                'high': 2550.0,
+                'low': 2490.0,
+                'close': 2520.0,
+                'volume': 1000
+            }
+        """
+        # Ensure timezone-aware datetime
+        candle_time = raw_candle['date']
+        if candle_time.tzinfo is None:
+            candle_time = pytz.timezone('Asia/Kolkata').localize(candle_time)
+
+        return {
+            'exchange': 'zerodha',
+            'symbol': symbol.upper(),
+            'interval': interval,
+            'open_time': candle_time,
+            'close_time': candle_time,  # Zerodha doesn't provide close time
+            'open': float(raw_candle['open']),
+            'high': float(raw_candle['high']),
+            'low': float(raw_candle['low']),
+            'close': float(raw_candle['close']),
+            'volume': float(raw_candle['volume']),
+            'quote_volume': None,  # Not provided by Zerodha
+            'trades': None,  # Not provided by Zerodha
+            'taker_buy_base_volume': None,
+            'taker_buy_quote_volume': None,
+            'extra_data': {}
+        }
+
+    def _normalize_tick(self, tick: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize WebSocket tick to unified kline format.
+
+        Args:
+            tick: Tick data from KiteTicker
+
+        Returns:
+            Normalized kline dictionary
+
+        Tick format:
+            {
+                'instrument_token': 408065,
+                'last_price': 1500.0,
+                'ohlc': {
+                    'open': 1480.0,
+                    'high': 1510.0,
+                    'low': 1475.0,
+                    'close': 1495.0
+                },
+                'volume': 50000,
+                'timestamp': datetime.datetime(...)
+            }
+        """
+        # Get symbol from token
+        token = tick['instrument_token']
+        symbol = self._token_to_symbol_cache.get(token, f"TOKEN_{token}")
+
+        # Get timestamp (use current time if not provided)
+        tick_time = tick.get('timestamp', tick.get('exchange_timestamp', datetime.now()))
+        if tick_time.tzinfo is None:
+            tick_time = pytz.timezone('Asia/Kolkata').localize(tick_time)
+
+        ohlc = tick.get('ohlc', {})
+
+        return {
+            'exchange': 'zerodha',
+            'symbol': symbol.split(':')[-1] if ':' in symbol else symbol,
+            'interval': '1m',  # Tick data
+            'open_time': tick_time,
+            'close_time': tick_time,
+            'open': float(ohlc.get('open', tick.get('last_price', 0))),
+            'high': float(ohlc.get('high', tick.get('last_price', 0))),
+            'low': float(ohlc.get('low', tick.get('last_price', 0))),
+            'close': float(tick.get('last_price', 0)),
+            'volume': float(tick.get('volume', 0)),
+            'quote_volume': None,
+            'trades': None,
+            'taker_buy_base_volume': None,
+            'taker_buy_quote_volume': None,
+            'extra_data': {
+                'instrument_token': token,
+                'mode': tick.get('mode'),
+                'tradable': tick.get('tradable'),
+                'change': tick.get('change')
+            }
+        }
+
+    def _convert_interval(self, interval: str) -> str:
+        """
+        Convert unified interval format to Zerodha format.
+
+        Args:
+            interval: Unified interval (e.g., '1m', '5m', '1h')
+
+        Returns:
+            Zerodha interval string
+        """
+        interval_map = {
+            '1m': 'minute',
+            '3m': '3minute',
+            '5m': '5minute',
+            '10m': '10minute',
+            '15m': '15minute',
+            '30m': '30minute',
+            '1h': '60minute',
+            '1d': 'day'
+        }
+
+        return interval_map.get(interval, 'minute')
+
+    def validate_interval(self, interval: str) -> bool:
+        """
+        Validate if interval is supported by Zerodha.
+
+        Args:
+            interval: Time interval to validate
+
+        Returns:
+            True if supported, False otherwise
+        """
+        supported = ['1m', '3m', '5m', '10m', '15m', '30m', '1h', '1d']
+        return interval in supported
+
+    def _get_instrument_token(self, symbol: str, exchange: str = "NSE") -> int:
+        """
+        Get instrument token for a symbol.
+
+        Args:
+            symbol: Trading symbol
+            exchange: Exchange segment
+
+        Returns:
+            Instrument token (integer)
+
+        Raises:
+            ValueError: If symbol not found
+        """
+        cache_key = f"{exchange}:{symbol}"
+
+        # Check cache first
+        if cache_key in self._instrument_cache:
+            return self._instrument_cache[cache_key]
+
+        # Fetch from API if not in cache
+        try:
+            instruments = self.kite.instruments(exchange)
+            for inst in instruments:
+                if inst['tradingsymbol'] == symbol:
+                    token = inst['instrument_token']
+                    # Update cache
+                    self._instrument_cache[cache_key] = token
+                    self._token_to_symbol_cache[token] = cache_key
+                    return token
+
+            raise ValueError(f"Symbol {exchange}:{symbol} not found")
+
+        except Exception as e:
+            logger.error(f"Error fetching instrument token for {cache_key}: {e}")
+            raise
+
+    def _generate_access_token(self, request_token: str) -> str:
+        """
+        Generate access token from request token.
+
+        Args:
+            request_token: Request token from login redirect
+
+        Returns:
+            Access token string
+
+        Raises:
+            Exception: If token generation fails
+        """
+        try:
+            data = self.kite.generate_session(
+                request_token,
+                api_secret=config.ZERODHA_SECRET_KEY
+            )
+            access_token = data["access_token"]
+
+            # Save to file
+            self._save_access_token(access_token)
+
+            logger.info("Access token generated and saved")
+            return access_token
+
+        except Exception as e:
+            logger.error(f"Failed to generate access token: {e}")
+            raise
+
+    def _set_and_validate_token(self, access_token: str) -> None:
+        """
+        Set and validate access token.
+
+        Args:
+            access_token: Access token to set
+
+        Raises:
+            Exception: If token is invalid
+        """
+        self.kite.set_access_token(access_token)
+
+        # Validate by fetching profile
+        try:
+            profile = self.kite.profile()
+            logger.info(f"Authenticated as: {profile.get('user_name', 'Unknown')}")
+        except Exception as e:
+            logger.error(f"Access token validation failed: {e}")
+            raise
+
+    def _save_access_token(self, token: str) -> None:
+        """Save access token to file."""
+        try:
+            with open(self.ACCESS_TOKEN_FILE, "w") as f:
+                f.write(token)
+            logger.debug("Access token saved to file")
+        except Exception as e:
+            logger.warning(f"Failed to save access token: {e}")
+
+    def _load_access_token(self) -> Optional[str]:
+        """Load access token from file."""
+        try:
+            if os.path.exists(self.ACCESS_TOKEN_FILE):
+                with open(self.ACCESS_TOKEN_FILE, "r") as f:
+                    token = f.read().strip()
+                logger.debug("Access token loaded from file")
+                return token
+        except Exception as e:
+            logger.warning(f"Failed to load access token: {e}")
+
+        return None
+
+    def get_login_url(self) -> str:
+        """
+        Get the login URL for manual authentication.
+
+        Returns:
+            Login URL string
+        """
+        return self.kite.login_url()
