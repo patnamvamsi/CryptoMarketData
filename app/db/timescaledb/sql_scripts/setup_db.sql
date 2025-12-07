@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS symbols (
     base_asset VARCHAR(20),
     quote_asset VARCHAR(20),
     status VARCHAR(20) DEFAULT 'TRADING',
-    priority INT DEFAULT 0 CHECK (priority >= 0 AND priority <= 10),
+    priority INT DEFAULT 0,
     active BOOLEAN DEFAULT FALSE,
     metadata JSONB DEFAULT '{}',
     last_updated TIMESTAMPTZ DEFAULT NOW(),
