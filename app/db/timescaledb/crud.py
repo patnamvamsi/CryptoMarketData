@@ -46,11 +46,19 @@ def truncate_temp_kline_table(exchange='binance'):
     return query
 
 
-def create_kline_binance_table(symbol, kline_interval):
+def create_kline_binance_table(symbol, kline_interval, exchange='binance'):
     """
     Creates a table to store kline data.
+
+    Args:
+        symbol: Trading symbol
+        kline_interval: Time interval
+        exchange: Exchange name (default: 'binance' for backward compatibility)
+
+    Returns:
+        Tuple of (query, table_name)
     """
-    table_name = get_table_name(symbol, kline_interval)
+    table_name = get_table_name(symbol, kline_interval, exchange)
     query = f"""create table {table_name}
  (
         open_time TIMESTAMPTZ,
@@ -68,7 +76,7 @@ def create_kline_binance_table(symbol, kline_interval):
     );
 
     SELECT create_hypertable('{table_name}', 'open_time');
-    
+
     CREATE UNIQUE INDEX idx_{table_name} ON {table_name}(open_time);
     """
     return query, table_name
@@ -345,7 +353,7 @@ def create_table_if_not_exists(symbol, kline_interval, session, exchange='binanc
 
     # create table if it does not exist
     if rs.fetchone()[0] == False:
-        query,table_name = create_kline_binance_table(symbol, kline_interval)
+        query,table_name = create_kline_binance_table(symbol, kline_interval, exchange)
         session.execute(query)
         session.commit()
         logger.info("Created table {}".format(table_name))

@@ -272,9 +272,37 @@ zerodha.start_streaming(
    - Verify token is valid
    - Check logs for WebSocket connection errors
 
-4. **Database table missing**
-   - Tables are created automatically on first data fetch
-   - Ensure unified symbols table exists (run database migration)
+4. **Database table missing / Cannot create tables for Zerodha symbols**
+   - **Cause**: The `temp_kline_zerodha` table may have wrong schema (TIMESTAMPTZ instead of NUMERIC)
+   - **Solution**: Run the migration script to fix it:
+     ```bash
+     psql -d market_data_dev1 -f app/db/timescaledb/sql_scripts/fix_zerodha_temp_table.sql
+     ```
+   - Or manually:
+     ```sql
+     DROP TABLE IF EXISTS temp_kline_zerodha;
+     -- Then run setup_db.sql again
+     ```
+   - Tables for individual symbols are created automatically on first data fetch
+   - Ensure unified symbols table exists (check `setup_db.sql`)
+
+5. **"cannot divide datetime by 1000" or timestamp conversion errors**
+   - This was fixed in the latest code - make sure you have the updated versions of:
+     - `app/ingest/zerodha_historical_data.py`
+     - `app/stream/stream_zerodha_kline.py`
+     - `app/db/timescaledb/crud.py`
+
+6. **"float() argument must be a string or a real number, not 'NoneType'"**
+   - **Cause**: Zerodha doesn't provide some fields (quote_volume, trades, etc.), they are None
+   - **Fixed**: All None values are now automatically converted to 0
+   - Make sure you have the latest version of the conversion functions
+
+7. **"from date cannot be after to date" error**
+   - **Cause**: Either `START_OF_TIME` config is set to a future/recent date, or invalid date ranges in gap filling
+   - **Solution**:
+     - Check `app/config/config.py` - `START_OF_TIME` should be `1483228800` (Jan 1, 2017) or earlier
+     - The code now automatically limits initial fetches to 60 days back (Zerodha API limit)
+     - Date range validation is now added to prevent this error
 
 ### Logging
 
@@ -305,6 +333,24 @@ Data streaming is only available during market hours. Historical data can be fet
 2. **Rate Limits**: Historical API has rate limits (3 requests/second)
 3. **Data Volume**: 1-minute data for 15 symbols ≈ 6750 candles/day
 4. **Database**: TimescaleDB handles compression and partitioning automatically
+
+## Zerodha API Limits
+
+**Important**: Zerodha has strict limits on historical data:
+
+1. **Minute-level data**: Maximum **60 days** back from current date
+2. **Max candles per request**: 2000 candles
+3. **Rate limits**: 3 requests per second
+
+**What this means for you:**
+- Initial data fetch is limited to last 60 days (configurable via `ZERODHA_MAX_DAYS_BACK`)
+- For 1-minute data, you can fetch ~33 hours per request (2000 minutes)
+- Daily and hourly data can go back much further
+
+**Default behavior:**
+- When no data exists: Fetches last 60 days
+- When data exists: Fetches from most recent timestamp to now
+- Gap filling: Works within existing data range
 
 ## Configuration Options
 

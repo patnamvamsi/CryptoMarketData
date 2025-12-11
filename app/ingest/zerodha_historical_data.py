@@ -63,6 +63,18 @@ class ZerodhaDownloader:
             start_time = datetime.datetime.fromtimestamp(start_time_epoch)
             end_time = datetime.datetime.fromtimestamp(end_time_epoch)
 
+            # Validate date range
+            if start_time >= end_time:
+                logger.warning(
+                    f"Invalid date range for {symbol}: start_time ({start_time}) >= end_time ({end_time}). Skipping."
+                )
+                return
+
+            # Check if date range is too small (less than 1 minute)
+            if (end_time - start_time).total_seconds() < 60:
+                logger.debug(f"Date range too small for {symbol}, skipping")
+                return
+
             # Fetch historical data using Zerodha adapter
             klines = self.zerodha.get_historical_data(
                 symbol=symbol,
@@ -79,8 +91,8 @@ class ZerodhaDownloader:
                 # Insert into database
                 q.insert_kline_rows(
                     symbol=symbol,
-                    interval=self.interval,
-                    kline_data=candle_sticks,
+                    kline=self.interval,
+                    candle_sticks=candle_sticks,
                     session=self.session,
                     exchange=self.exchange
                 )
@@ -102,23 +114,40 @@ class ZerodhaDownloader:
 
         Returns:
             List of lists matching database schema
+            Note: Timestamps are converted to milliseconds (insert_kline_rows divides by 1000)
         """
         candle_sticks = []
         for kline in klines:
+            # Convert datetime to millisecond epoch timestamps
+            open_time = kline['open_time']
+            close_time = kline['close_time']
+
+            # Handle both datetime objects and numeric timestamps
+            if isinstance(open_time, datetime.datetime):
+                open_time_ms = int(open_time.timestamp() * 1000)
+            else:
+                open_time_ms = int(open_time)
+
+            if isinstance(close_time, datetime.datetime):
+                close_time_ms = int(close_time.timestamp() * 1000)
+            else:
+                close_time_ms = int(close_time)
+
             # Format: [open_time, open, high, low, close, volume, close_time,
             #          quote_volume, trades, taker_buy_base, taker_buy_quote, extra]
+            # Ensure all None values are converted to 0 or default values
             candle_stick = [
-                kline['open_time'],
-                kline['open'],
-                kline['high'],
-                kline['low'],
-                kline['close'],
-                kline['volume'],
-                kline['close_time'],
-                kline.get('quote_volume', 0),
-                kline.get('trades', 0),
-                kline.get('taker_buy_base_volume', 0),
-                kline.get('taker_buy_quote_volume', 0),
+                open_time_ms,
+                kline['open'] or 0,
+                kline['high'] or 0,
+                kline['low'] or 0,
+                kline['close'] or 0,
+                kline['volume'] or 0,
+                close_time_ms,
+                kline.get('quote_volume') or 0,
+                kline.get('trades') or 0,
+                kline.get('taker_buy_base_volume') or 0,
+                kline.get('taker_buy_quote_volume') or 0,
                 0  # ignore field
             ]
             candle_sticks.append(candle_stick)
@@ -254,8 +283,18 @@ class ZerodhaDownloader:
         if max_time is not None:
             return max_time.timestamp()
 
-        # If no data exists, start from configured begin time
-        return self.BEGIN_OF_THE_TIME
+        # If no data exists, use a reasonable default for Zerodha
+        # Zerodha has API limits: max 60 days for minute data
+        # So instead of going back to BEGIN_OF_THE_TIME (2017), go back max 60 days
+        max_days_back = getattr(config, 'ZERODHA_MAX_DAYS_BACK', 60)
+        start_time = datetime.datetime.now() - datetime.timedelta(days=max_days_back)
+
+        logger.info(
+            f"No existing data for {symbol}, starting from {start_time} "
+            f"({max_days_back} days ago)"
+        )
+
+        return start_time.timestamp()
 
 
 if __name__ == "__main__":

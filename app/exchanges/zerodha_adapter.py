@@ -562,6 +562,7 @@ class ZerodhaAdapter(BaseExchange):
         Raises:
             Exception: If token is invalid
         """
+        #data = self.kite.generate_session(access_token, api_secret=config.ZERODHA_SECRET_KEY)
         self.kite.set_access_token(access_token)
 
         # Validate by fetching profile

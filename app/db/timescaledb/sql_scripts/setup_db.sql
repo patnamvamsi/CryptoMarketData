@@ -89,13 +89,13 @@ COMMENT ON COLUMN symbols.metadata IS 'Exchange-specific metadata stored as JSON
 
 -- Temporary staging table for Zerodha kline data
 CREATE TABLE IF NOT EXISTS temp_kline_zerodha(
-        open_time TIMESTAMPTZ,
+        open_time NUMERIC,
         open NUMERIC,
         high NUMERIC,
         low NUMERIC,
         close NUMERIC,
         volume NUMERIC,
-        close_time TIMESTAMPTZ,
+        close_time NUMERIC,
         quote_asset_volume NUMERIC,
         trades NUMERIC,
         taker_buy_base_asset_volume NUMERIC,
@@ -103,5 +103,5 @@ CREATE TABLE IF NOT EXISTS temp_kline_zerodha(
         ignore NUMERIC
     );
 
-COMMENT ON TABLE temp_kline_zerodha IS 'Temporary staging table for Zerodha kline data processing';
+COMMENT ON TABLE temp_kline_zerodha IS 'Temporary staging table for Zerodha kline data processing (uses epoch timestamps)';
 

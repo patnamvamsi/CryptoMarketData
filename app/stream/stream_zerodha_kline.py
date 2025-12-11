@@ -113,30 +113,47 @@ class StreamZerodhaKLineData:
             tick_data: Normalized kline dictionary from adapter
         """
         try:
+            import datetime
+
             symbol = tick_data['symbol']
             logger.debug(f"Received tick for {symbol}: {tick_data}")
 
+            # Convert datetime to millisecond epoch timestamps
+            open_time = tick_data['open_time']
+            close_time = tick_data['close_time']
+
+            if isinstance(open_time, datetime.datetime):
+                open_time_ms = int(open_time.timestamp() * 1000)
+            else:
+                open_time_ms = int(open_time)
+
+            if isinstance(close_time, datetime.datetime):
+                close_time_ms = int(close_time.timestamp() * 1000)
+            else:
+                close_time_ms = int(close_time)
+
             # Convert to database format
+            # Ensure all None values are converted to 0
             candle_stick = [[
-                tick_data['open_time'],
-                tick_data['open'],
-                tick_data['high'],
-                tick_data['low'],
-                tick_data['close'],
-                tick_data['volume'],
-                tick_data['close_time'],
-                tick_data.get('quote_volume', 0),
-                tick_data.get('trades', 0),
-                tick_data.get('taker_buy_base_volume', 0),
-                tick_data.get('taker_buy_quote_volume', 0),
+                open_time_ms,
+                tick_data['open'] or 0,
+                tick_data['high'] or 0,
+                tick_data['low'] or 0,
+                tick_data['close'] or 0,
+                tick_data['volume'] or 0,
+                close_time_ms,
+                tick_data.get('quote_volume') or 0,
+                tick_data.get('trades') or 0,
+                tick_data.get('taker_buy_base_volume') or 0,
+                tick_data.get('taker_buy_quote_volume') or 0,
                 0  # ignore field
             ]]
 
             # Insert into database
             q.insert_kline_rows(
                 symbol=symbol,
-                interval=self.interval,
-                kline_data=candle_stick,
+                kline=self.interval,
+                candle_sticks=candle_stick,
                 session=self.session,
                 exchange=self.exchange
             )
