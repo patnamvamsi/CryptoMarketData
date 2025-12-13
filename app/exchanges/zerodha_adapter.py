@@ -320,6 +320,13 @@ class ZerodhaAdapter(BaseExchange):
                 'exchange': 'NSE'
             }
         """
+        # Convert expiry date to ISO string for JSON serialization
+        expiry = raw_instrument.get('expiry')
+        if expiry and hasattr(expiry, 'isoformat'):
+            expiry = expiry.isoformat()
+        elif expiry == '':
+            expiry = None
+
         return {
             'exchange': 'zerodha',
             'symbol': raw_instrument['tradingsymbol'],
@@ -336,7 +343,7 @@ class ZerodhaAdapter(BaseExchange):
                 'instrument_type': raw_instrument.get('instrument_type'),
                 'tick_size': raw_instrument.get('tick_size'),
                 'lot_size': raw_instrument.get('lot_size'),
-                'expiry': raw_instrument.get('expiry'),
+                'expiry': expiry,
                 'strike': raw_instrument.get('strike')
             }
         }
