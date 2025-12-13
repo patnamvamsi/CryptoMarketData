@@ -21,9 +21,13 @@ Upcoming features:
 ## How to set up and run
 Prerequisites:
 1. Timescale DB installed and running.
-2. Rename app/config/config_template.py to app/config/config.py and add relavant keys
-3. Run the initial setup script from app/db/timescaledb/scripts/setup_db.sql 
-4. Run intialise.py
+2. Install Python dependencies: `pip install -r requirements.txt`
+3. Create a `.env` file in the project root:
+   - Copy `.env.example` to `.env`
+   - Add your API keys and credentials (Binance, Zerodha, TimescaleDB, etc.)
+   - **Never commit `.env` to version control**
+4. Run the initial setup script from app/db/timescaledb/scripts/setup_db.sql
+5. Run intialise.py
 
 Steps to run as a service:
 cd <your_project_location>/CryptoMarketData/app/

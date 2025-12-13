@@ -447,15 +447,30 @@ def upsert_symbol(symbol_dict, session):
         None
     """
     import json
+    from datetime import date, datetime
 
-    metadata_json = json.dumps(symbol_dict.get('metadata', {}))
+    # Convert any date/datetime objects in metadata to ISO strings
+    metadata = symbol_dict.get('metadata', {})
+    serializable_metadata = {}
+    for key, value in metadata.items():
+        if isinstance(value, (date, datetime)):
+            serializable_metadata[key] = value.isoformat()
+        else:
+            serializable_metadata[key] = value
+
+    try:
+        metadata_json = json.dumps(serializable_metadata)
+    except TypeError as e:
+        logger.error(f"Failed to serialize metadata for {symbol_dict.get('symbol')}: {e}")
+        logger.error(f"Metadata content: {metadata}")
+        raise
 
     sql = f"""
-    INSERT INTO symbols (exchange, symbol, base_asset, quote_asset, status, 
+    INSERT INTO symbols (exchange, symbol, base_asset, quote_asset, status,
                         priority, active, metadata, last_updated)
-    VALUES ('{symbol_dict['exchange']}', '{symbol_dict['symbol']}', 
-            '{symbol_dict.get('base_asset', '')}', '{symbol_dict.get('quote_asset', '')}', 
-            '{symbol_dict.get('status', 'UNKNOWN')}', {symbol_dict.get('priority', 9999)}, 
+    VALUES ('{symbol_dict['exchange']}', '{symbol_dict['symbol']}',
+            '{symbol_dict.get('base_asset', '')}', '{symbol_dict.get('quote_asset', '')}',
+            '{symbol_dict.get('status', 'UNKNOWN')}', {symbol_dict.get('priority', 9999)},
             {symbol_dict.get('active', False)}, '{metadata_json}'::jsonb, CURRENT_TIMESTAMP)
     ON CONFLICT (exchange, symbol)
     DO UPDATE SET

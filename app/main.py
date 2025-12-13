@@ -4,6 +4,7 @@ import time
 from multiprocessing import Process
 
 from fastapi import FastAPI, status, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app import config
@@ -25,6 +26,19 @@ logger = setup_logging()
 
 sys.path.insert(1, os.path)
 app = FastAPI()
+
+# Configure CORS to allow requests from the Django frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+
 session_pool = c.get_session_pool()
 initilaise_topics()
 
