@@ -33,8 +33,8 @@ class ZerodhaAdapter(BaseExchange):
     Note: Zerodha requires daily authentication with access token.
     """
 
-    # File to store access token
-    ACCESS_TOKEN_FILE = "zerodha_access_token.txt"
+    # File to store access token (relative to app directory)
+    ACCESS_TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "zerodha_access_token.txt")
 
     def __init__(self, access_token: Optional[str] = None, request_token: Optional[str] = None):
         """

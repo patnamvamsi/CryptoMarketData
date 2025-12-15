@@ -2,12 +2,16 @@ import datetime
 import traceback
 
 import sqlalchemy
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from app.config import config as cfg
 import pandas as pd
 import logging
 from app.logger import setup_logging
 logger = logging.getLogger(__name__)
+
+# Redis cache imports
+from app.cache.decorators import cache_result
+from app.config import config
 
 def create_kline_temp_table():
     """
@@ -98,6 +102,11 @@ def get_table_name(symbol, kline_interval, exchange='binance'):
     return table_name
 
 
+@cache_result(
+    key_pattern="cryptomarket:table_exists:{exchange}:{symbol}:{kline_interval}",
+    ttl=None,  # No expiry - tables rarely deleted
+    enabled_check=lambda: config.ENABLE_REDIS_CACHE
+)
 def check_if_table_exists(symbol, kline_interval, exchange='binance'):
     """
     Checks if a table exists.
@@ -182,9 +191,9 @@ def insert_kline_rows(symbol, kline, candle_sticks, session, exchange='binance')
         None
     """
     temp_table = f'temp_kline_{exchange}'
-    meta = sqlalchemy.MetaData(bind=session.bind)
-    session.execute(truncate_temp_kline_table(exchange))
-    kline_table = sqlalchemy.Table(temp_table, meta, autoload=True)
+    meta = sqlalchemy.MetaData()
+    session.execute(text(truncate_temp_kline_table(exchange)))
+    kline_table = sqlalchemy.Table(temp_table, meta, autoload_with=session.bind)
     kline_table_ins = kline_table.insert()
 
     fields = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume",
@@ -208,8 +217,19 @@ def insert_kline_rows(symbol, kline, candle_sticks, session, exchange='binance')
         session.execute(kline_table_ins, xs)
         session.commit()
         query, table_name = load_kline_temp_to_main(symbol, kline, exchange)
-        session.execute(query)
+        session.execute(text(query))
         session.commit()
+
+        # Update max_timestamp cache with latest value
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+        if cache and candle_sticks:
+            # Get the latest close_time from inserted data
+            latest_close_time = max(row[6] for row in candle_sticks)
+            cache_key = f"cryptomarket:max_timestamp:{table_name}"
+            from datetime import datetime
+            cache.set(cache_key, datetime.fromtimestamp(latest_close_time).isoformat(), ttl=120)
+
     except Exception as ex:
         logger.error("Error " + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
@@ -302,20 +322,25 @@ def update_symbol_config(symbol, priority, activate, session):
     WHERE symbol = '{symbol}'"""
 
     try:
-        session.execute(sql)
+        session.execute(text(sql))
     except Exception as ex:
         logger.error("Error updating symbol:" + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
     return
 
 
+@cache_result(
+    key_pattern="cryptomarket:max_timestamp:{table}",
+    ttl=120,  # 2 minutes
+    enabled_check=lambda: config.ENABLE_REDIS_CACHE
+)
 def get_max_timestamp(table, session):
 
     sql = f"""
     SELECT max(close_time)
     FROM {table}"""
 
-    rs = session.execute(sql)
+    rs = session.execute(text(sql))
     if rs.returns_rows:
         for row in rs:
             return row[0]
@@ -327,9 +352,13 @@ def get_active_symbols(session, active=True):
     SELECT symbol from binance_symbols
     WHERE active = {active} order by  priority"""
 
-    result_proxy = session.execute(sql)
-    symbol_list = pd.DataFrame(result_proxy.fetchall())[0].values
+    result_proxy = session.execute(text(sql))
+    results = result_proxy.fetchall()
 
+    if not results:
+        return []
+
+    symbol_list = pd.DataFrame(results)[0].values
     return symbol_list
 
 
@@ -349,14 +378,22 @@ def create_table_if_not_exists(symbol, kline_interval, session, exchange='binanc
 
     #check if table exists
     query, table_name = check_if_table_exists(symbol, kline_interval, exchange)
-    rs = session.execute(query)
+    rs = session.execute(text(query))
 
     # create table if it does not exist
     if rs.fetchone()[0] == False:
         query,table_name = create_kline_binance_table(symbol, kline_interval, exchange)
-        session.execute(query)
+        session.execute(text(query))
         session.commit()
         logger.info("Created table {}".format(table_name))
+
+        # Update cache to reflect table now exists
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+        if cache:
+            cache_key = f"cryptomarket:table_exists:{exchange}:{symbol}:{kline_interval}"
+            cache.set(cache_key, True, ttl=None)
+
         return table_name
     else:
         logger.info("Table {} already exists".format(table_name))
@@ -395,13 +432,18 @@ def find_gaps_in_kline_data(symbol, kline_interval, session, exchange='binance')
               EXTRACT(EPOCH FROM (gap_end - gap_start)) > 120 -- 120 seconds = 2 minutes
             ORDER BY 1 DESC;
             """
-    rs = session.execute(query)
+    rs = session.execute(text(query))
     return rs
 
 # ============================================================================
 # UNIFIED SYMBOLS TABLE FUNCTIONS (EXCHANGE-AGNOSTIC)
 # ============================================================================
 
+@cache_result(
+    key_pattern="cryptomarket:active_symbols:{exchange}:{active}",
+    ttl=300,  # 5 minutes
+    enabled_check=lambda: config.ENABLE_REDIS_CACHE
+)
 def get_active_symbols_unified(session, exchange=None, active=True):
     """
     Get active symbols from unified symbols table.
@@ -425,7 +467,7 @@ def get_active_symbols_unified(session, exchange=None, active=True):
         WHERE active = {active}
         ORDER BY exchange, priority"""
 
-    result_proxy = session.execute(sql)
+    result_proxy = session.execute(text(sql))
     rows = result_proxy.fetchall()
 
     if exchange:
@@ -482,7 +524,7 @@ def upsert_symbol(symbol_dict, session):
     """
 
     try:
-        session.execute(sql)
+        session.execute(text(sql))
         session.commit()
     except Exception as ex:
         logger.error(f"Error upserting symbol {symbol_dict.get('symbol')}: {ex}")
@@ -513,8 +555,16 @@ def update_symbol_status(exchange, symbol, priority, active, session):
     WHERE exchange = '{exchange}' AND symbol = '{symbol}'"""
 
     try:
-        session.execute(sql)
+        session.execute(text(sql))
         session.commit()
+
+        # Invalidate active_symbols cache
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+        if cache:
+            cache.delete_pattern(f"cryptomarket:active_symbols:{exchange}:*")
+            logger.info(f"Invalidated active_symbols cache for {exchange}")
+
     except Exception as ex:
         logger.error(f"Error updating symbol status for {exchange}:{symbol}: {ex}")
         traceback.print_exception(type(ex), ex, ex.__traceback__)
@@ -539,7 +589,7 @@ def get_symbol_by_exchange_and_name(exchange, symbol, session):
     WHERE exchange = '{exchange}' AND symbol = '{symbol}'
     """
 
-    result = session.execute(sql)
+    result = session.execute(text(sql))
     row = result.fetchone()
 
     if row:

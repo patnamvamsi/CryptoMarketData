@@ -24,7 +24,7 @@ from app.logger import setup_logging
 # Setup logging at the very start
 logger = setup_logging()
 
-sys.path.insert(1, os.path)
+sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 app = FastAPI()
 
 # Configure CORS to allow requests from the Django frontend
@@ -41,6 +41,29 @@ app.add_middleware(
 
 session_pool = c.get_session_pool()
 initilaise_topics()
+
+# Initialize Redis cache
+redis_cache = None
+if config.ENABLE_REDIS_CACHE:
+    try:
+        from app.cache.redis_client import RedisCache, set_redis_cache
+        redis_cache = RedisCache(
+            host=config.REDIS_HOST,
+            port=config.REDIS_PORT,
+            db=config.REDIS_DB,
+            password=config.REDIS_PASSWORD,
+            enabled=config.ENABLE_REDIS_CACHE
+        )
+        set_redis_cache(redis_cache)
+        if redis_cache.health_check():
+            logger.info(f"Redis cache initialized at {config.REDIS_HOST}:{config.REDIS_PORT}")
+        else:
+            logger.warning("Redis health check failed")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis: {e}. Running without cache.")
+        redis_cache = None
+else:
+    logger.info("Redis cache disabled by configuration")
 
 # pydantic semantic checks for the historical model
 class historicaldata_post(BaseModel):
@@ -124,6 +147,27 @@ def app_startup():
     if config.ENABLE_ZERODHA_GAP_FILL:
         logger.info("Zerodha gap fill enabled, adding to scheduler")
         scheduler.add_job(fetch_zerodha_gap_data)
+
+    # Warm up cache with active symbols
+    if config.ENABLE_REDIS_CACHE and redis_cache:
+        try:
+            logger.info("Warming up cache with active symbols...")
+            warm_session = session_pool()
+            from app.db.timescaledb import crud
+
+            # Warm Binance symbols
+            binance_symbols = crud.get_active_symbols_unified(warm_session, exchange='binance', active=True)
+            logger.info(f"Cached {len(binance_symbols)} active Binance symbols")
+
+            # Warm Zerodha symbols if enabled
+            if config.ENABLE_ZERODHA_STREAMING or config.ENABLE_ZERODHA_GAP_FILL:
+                zerodha_symbols = crud.get_active_symbols_unified(warm_session, exchange='zerodha', active=True)
+                logger.info(f"Cached {len(zerodha_symbols)} active Zerodha symbols")
+
+            warm_session.close()
+            logger.info("Cache warming completed")
+        except Exception as e:
+            logger.error(f"Error during cache warming: {e}")
 
     scheduler.start()
     logger.info("Background scheduler started successfully")
@@ -250,6 +294,92 @@ def initialize_default_nse_symbols():
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
+
+
+# ============================================================================
+# CACHE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/cache/stats")
+def get_cache_stats():
+    """Get cache statistics (hit rate, memory usage, etc.)"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        from app.config import config as cfg
+        cache = get_redis_cache()
+
+        if not cache or not cfg.ENABLE_REDIS_CACHE:
+            return {
+                "enabled": False,
+                "message": "Redis cache is disabled"
+            }
+
+        stats = cache.get_stats()
+        health = cache.health_check()
+
+        return {
+            "enabled": True,
+            "healthy": health,
+            "stats": stats,
+            "redis_config": {
+                "host": cfg.REDIS_HOST,
+                "port": cfg.REDIS_PORT,
+                "db": cfg.REDIS_DB
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching cache stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/cache/clear")
+def clear_all_cache():
+    """Clear all cached data"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+
+        if not cache:
+            raise HTTPException(status_code=400, detail="Redis cache not available")
+
+        cache.clear_all()
+        logger.info("Cleared all cache data")
+        return {"message": "All cache cleared successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/cache/clear/{pattern}")
+def clear_cache_pattern(pattern: str):
+    """Clear cache entries matching a pattern (e.g., 'active_symbols:*')"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+
+        if not cache:
+            raise HTTPException(status_code=400, detail="Redis cache not available")
+
+        # Add service prefix if not present
+        if not pattern.startswith("cryptomarket:"):
+            pattern = f"cryptomarket:{pattern}"
+
+        deleted_count = cache.delete_pattern(pattern)
+        logger.info(f"Cleared {deleted_count} cache entries matching pattern: {pattern}")
+
+        return {
+            "message": f"Cleared cache pattern: {pattern}",
+            "deleted_count": deleted_count
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache pattern {pattern}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 '''

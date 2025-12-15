@@ -13,10 +13,16 @@ from app.exchanges.zerodha_adapter import ZerodhaAdapter
 from app.config import config
 import app.db.timescaledb.crud as q
 from app.logger import setup_logging
+from app.cache.decorators import cache_result
 
 logger = setup_logging()
 
 
+@cache_result(
+    key_pattern="cryptomarket:exchange_info:zerodha:{exchange_segment}",
+    ttl=3600,  # 1 hour
+    enabled_check=lambda: config.ENABLE_REDIS_CACHE
+)
 def refresh_zerodha_symbols(session, exchange_segment='NSE'):
     """
     Refresh symbols from Zerodha API and upsert into unified symbols table.
