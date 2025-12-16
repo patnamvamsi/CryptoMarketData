@@ -71,7 +71,7 @@ def main():
         access_token = data["access_token"]
 
         # Save to file
-        with open("app/zerodha_access_token.txt", "w") as f:
+        with open("../app/zerodha_access_token.txt", "w") as f:
             f.write(access_token)
 
         print("✅ SUCCESS! Access token generated and saved.")
