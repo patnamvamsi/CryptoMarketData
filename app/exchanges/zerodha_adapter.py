@@ -18,7 +18,27 @@ from .base_exchange import BaseExchange
 from app.config import config
 from app.models.market_data import Symbol, Kline
 
+# Try to import automated auth module
+try:
+    from app.auth.zerodha_auto_auth import get_request_token, ZerodhaAuthError
+    AUTO_AUTH_AVAILABLE = True
+except ImportError as e:
+    AUTO_AUTH_AVAILABLE = False
+    ZerodhaAuthError = Exception  # Fallback
+
+# Try to import token manager for Redis-based token sharing
+try:
+    from app.auth.token_manager import get_token_manager
+    TOKEN_MANAGER_AVAILABLE = True
+except ImportError as e:
+    TOKEN_MANAGER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+if not AUTO_AUTH_AVAILABLE:
+    logger.warning("Automated Zerodha authentication not available (missing dependencies)")
+if not TOKEN_MANAGER_AVAILABLE:
+    logger.warning("Token manager not available (missing dependencies)")
+
 
 
 class ZerodhaAdapter(BaseExchange):
@@ -40,12 +60,19 @@ class ZerodhaAdapter(BaseExchange):
         """
         Initialize Zerodha adapter with authentication.
 
+        Authentication priority (first successful method used):
+        1. Provided access_token parameter (explicit override)
+        2. Provided request_token parameter (explicit override)
+        3. Automated authentication using credentials from config
+        4. Load from file (app/zerodha_access_token.txt)
+        5. Raise exception if all methods fail
+
         Args:
             access_token: Pre-generated access token (valid for 1 day)
             request_token: Request token from login redirect (for generating access token)
 
         Raises:
-            Exception: If authentication fails
+            Exception: If all authentication methods fail
         """
         super().__init__()
         self._exchange_name = 'zerodha'
@@ -58,32 +85,56 @@ class ZerodhaAdapter(BaseExchange):
             logger.error(f"Failed to initialize KiteConnect client: {e}")
             raise
 
-        # Handle authentication
+        # Tier 1: Use provided access token
         if access_token:
-            # Use provided access token
+            logger.debug("Using provided access_token parameter")
             self._set_and_validate_token(access_token)
+
+        # Tier 2: Generate from provided request token
         elif request_token:
-            # Generate new access token from request token
+            logger.debug("Generating access_token from provided request_token parameter")
             access_token = self._generate_access_token(request_token)
             self._set_and_validate_token(access_token)
+
         else:
-            # Try to load from file
-            loaded_token = self._load_access_token()
-            if loaded_token:
+            # Tier 3: Try automated authentication
+            auth_success = False
+
+            if self._should_attempt_auto_auth():
+                logger.info("Attempting automated Zerodha authentication...")
                 try:
-                    self._set_and_validate_token(loaded_token)
+                    auto_request_token = self._try_automated_auth()
+                    if auto_request_token:
+                        access_token = self._generate_access_token(auto_request_token)
+                        self._set_and_validate_token(access_token)
+                        auth_success = True
+                        logger.info("Automated authentication successful!")
                 except Exception as e:
-                    logger.warning(f"Saved access token invalid: {e}")
+                    logger.warning(f"Automated authentication failed: {e}")
+                    logger.info("Falling back to manual authentication flow...")
+
+            # Tier 4: Load from file (if auto-auth failed or was skipped)
+            if not auth_success:
+                loaded_token = self._load_access_token()
+                if loaded_token:
+                    try:
+                        self._set_and_validate_token(loaded_token)
+                        logger.info("Using access token from file")
+                    except Exception as e:
+                        logger.warning(f"Saved access token invalid: {e}")
+                        raise Exception(
+                            "Zerodha access token expired or invalid. "
+                            "Please provide credentials for automated auth or manually generate token."
+                        )
+                else:
+                    # Tier 5: No authentication available
                     raise Exception(
-                        "Zerodha access token expired or invalid. "
-                        "Please provide a valid access_token or request_token."
+                        "No Zerodha authentication available. Please either:\n"
+                        "1. Set ZERODHA_USERNAME, ZERODHA_PASSWORD, ZERODHA_TOTP_KEY in .env for automated auth\n"
+                        "2. Provide access_token parameter\n"
+                        "3. Provide request_token parameter\n"
+                        "4. Run scripts/zerodha_auth.py to generate token manually"
                     )
-            else:
-                raise Exception(
-                    "No access token available. Please provide either:\n"
-                    "1. access_token (from previous session, valid for 1 day)\n"
-                    "2. request_token (from login redirect, to generate new access_token)"
-                )
 
         # WebSocket ticker (lazy initialized)
         self.kws: Optional[KiteTicker] = None
@@ -563,6 +614,8 @@ class ZerodhaAdapter(BaseExchange):
         """
         Set and validate access token.
 
+        Also stores token in Redis for sharing with other microservices.
+
         Args:
             access_token: Access token to set
 
@@ -575,7 +628,24 @@ class ZerodhaAdapter(BaseExchange):
         # Validate by fetching profile
         try:
             profile = self.kite.profile()
+            user_id = profile.get('user_id', profile.get('user_name', 'Unknown'))
             logger.info(f"Authenticated as: {profile.get('user_name', 'Unknown')}")
+
+            # Store token in Redis for sharing with other microservices (webserver, etc.)
+            if TOKEN_MANAGER_AVAILABLE:
+                try:
+                    from app.cache.redis_client import get_redis_cache
+                    redis = get_redis_cache()
+                    if redis and redis.enabled:
+                        token_manager = get_token_manager(redis)
+                        token_manager.store_token(access_token, user_id, profile)
+                        logger.info(f"Zerodha token stored in Redis for cross-service access")
+                    else:
+                        logger.warning("Redis not available, token not stored for sharing")
+                except Exception as e:
+                    logger.warning(f"Failed to store token in Redis: {e}")
+                    # Non-critical, continue anyway
+
         except Exception as e:
             logger.error(f"Access token validation failed: {e}")
             raise
@@ -601,6 +671,63 @@ class ZerodhaAdapter(BaseExchange):
             logger.warning(f"Failed to load access token: {e}")
 
         return None
+
+    def _should_attempt_auto_auth(self) -> bool:
+        """
+        Check if automated authentication should be attempted.
+
+        Returns:
+            bool: True if all conditions are met for auto-auth
+        """
+        if not AUTO_AUTH_AVAILABLE:
+            logger.debug("Auto-auth module not available")
+            return False
+
+        if not config.ENABLE_ZERODHA_AUTO_AUTH:
+            logger.debug("Auto-auth disabled in config")
+            return False
+
+        # Check if all required credentials are provided
+        has_credentials = all([
+            config.ZERODHA_API_KEY,
+            config.ZERODHA_USERNAME,
+            config.ZERODHA_PASSWORD,
+            config.ZERODHA_TOTP_KEY
+        ])
+
+        if not has_credentials:
+            logger.debug("Auto-auth credentials not fully configured")
+            return False
+
+        return True
+
+    def _try_automated_auth(self) -> Optional[str]:
+        """
+        Attempt automated authentication using credentials from config.
+
+        Returns:
+            Optional[str]: Request token if successful, None otherwise
+
+        Raises:
+            ZerodhaAuthError: If authentication fails with detailed error
+        """
+        try:
+            request_token = get_request_token(
+                api_key=config.ZERODHA_API_KEY,
+                username=config.ZERODHA_USERNAME,
+                password=config.ZERODHA_PASSWORD,
+                totp_key=config.ZERODHA_TOTP_KEY,
+                timeout=30
+            )
+            logger.info("Automated authentication successful")
+            return request_token
+
+        except ZerodhaAuthError as e:
+            logger.error(f"Automated authentication failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in automated authentication: {e}")
+            raise ZerodhaAuthError(f"Automated auth failed: {e}") from e
 
     def get_login_url(self) -> str:
         """
