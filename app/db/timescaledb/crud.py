@@ -86,6 +86,27 @@ def create_kline_binance_table(symbol, kline_interval, exchange='binance'):
     return query, table_name
 
 
+def sanitize_symbol_for_table(symbol):
+    """
+    Sanitize symbol name for use in PostgreSQL table names.
+    Replaces all special characters (non-alphanumeric) with underscores.
+
+    Args:
+        symbol: Trading symbol (e.g., 'BAJAJ-AUTO', 'M&M')
+
+    Returns:
+        Sanitized symbol (e.g., 'bajaj_auto', 'm_m')
+    """
+    import re
+    # Replace any non-alphanumeric character with underscore
+    sanitized = re.sub(r'[^a-zA-Z0-9]', '_', symbol.lower())
+    # Remove consecutive underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    return sanitized
+
+
 def get_table_name(symbol, kline_interval, exchange='binance'):
     """
     Generate table name for kline data.
@@ -98,7 +119,8 @@ def get_table_name(symbol, kline_interval, exchange='binance'):
     Returns:
         Table name in format: {exchange}_{symbol}_kline_{interval}
     """
-    table_name = f"{exchange}_{symbol.lower()}_kline_{kline_interval}"
+    sanitized_symbol = sanitize_symbol_for_table(symbol)
+    table_name = f"{exchange}_{sanitized_symbol}_kline_{kline_interval}"
     return table_name
 
 
@@ -190,6 +212,12 @@ def insert_kline_rows(symbol, kline, candle_sticks, session, exchange='binance')
     Returns:
         None
     """
+    # Rollback any previous failed transaction to ensure clean state
+    try:
+        session.rollback()
+    except Exception:
+        pass  # Ignore if no transaction to rollback
+
     temp_table = f'temp_kline_{exchange}'
     meta = sqlalchemy.MetaData()
     session.execute(text(truncate_temp_kline_table(exchange)))
@@ -233,7 +261,7 @@ def insert_kline_rows(symbol, kline, candle_sticks, session, exchange='binance')
     except Exception as ex:
         logger.error("Error " + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
-
+        session.rollback()  # Rollback failed transaction to allow future operations
 
     return
 
@@ -323,9 +351,11 @@ def update_symbol_config(symbol, priority, activate, session):
 
     try:
         session.execute(text(sql))
+        session.commit()  # Commit the transaction to persist changes
     except Exception as ex:
         logger.error("Error updating symbol:" + symbol + str(ex))
         traceback.print_exception(type(ex), ex, ex.__traceback__)
+        session.rollback()  # Rollback on error
     return
 
 

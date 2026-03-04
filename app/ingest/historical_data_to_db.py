@@ -64,5 +64,7 @@ class BinanceDownloader(cb.BinanceData):
         table_name = q.get_table_name(symbol, self.kline)
         max_time = q.get_max_timestamp(table_name, self.session)
         if max_time is not None:
+            if isinstance(max_time, str):
+                max_time = datetime.datetime.fromisoformat(max_time)
             return max_time.timestamp()
         return self.BEGIN_OF_THE_TIME
