@@ -2,8 +2,15 @@ from app.config import config as cfg
 import pandas as pd
 from binance.client import Client
 from app.db.timescaledb import crud as q
+from app.cache.decorators import cache_result
+from app.config import config
 
 
+@cache_result(
+    key_pattern="cryptomarket:exchange_info:binance",
+    ttl=3600,  # 1 hour
+    enabled_check=lambda: config.ENABLE_REDIS_CACHE
+)
 def refresh_binance_symbols(session):
 
     client = Client(cfg.API_KEY, cfg.API_SECRET)

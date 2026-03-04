@@ -43,11 +43,11 @@ class StreamKLineData:
 
         def handle_socket_message(msg):
             msg = msg['data']
-            print(f"message type: {msg['e']}")
-            print(msg)
+            #print(f"message type: {msg['e']}")
+            #print(msg)
             if msg['e'] == 'kline':
                 symbol, candle_stick = convert_to_candle_stick(msg)
-                print(symbol, candle_stick)
+                #print(symbol, candle_stick)
                 q.insert_kline_rows(symbol, kline, candle_stick, self.session)
                 if STREAM_MARKET_DATA_KAFKA:
                     self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, bytes(str(candle_stick).encode('utf-8')))

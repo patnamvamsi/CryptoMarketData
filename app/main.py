@@ -4,13 +4,17 @@ import time
 from multiprocessing import Process
 
 from fastapi import FastAPI, status, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app import config
 from pydantic import BaseModel
 from app.ingest import manage_binance_symbols as sym
 from app.ingest import historical_data_to_db as h
+from app.ingest import manage_zerodha_symbols as zerodha_sym
+from app.ingest.zerodha_historical_data import ZerodhaDownloader
 from app.stream.get_streaming_kline import StreamKLineData
+from app.stream.stream_zerodha_kline import StreamZerodhaKLineData
 import csv
 import os, sys
 from app.db.timescaledb import timescaledb_connect  as c
@@ -20,10 +24,46 @@ from app.logger import setup_logging
 # Setup logging at the very start
 logger = setup_logging()
 
-sys.path.insert(1, os.path)
+sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 app = FastAPI()
+
+# Configure CORS to allow requests from the Django frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+
 session_pool = c.get_session_pool()
 initilaise_topics()
+
+# Initialize Redis cache
+redis_cache = None
+if config.ENABLE_REDIS_CACHE:
+    try:
+        from app.cache.redis_client import RedisCache, set_redis_cache
+        redis_cache = RedisCache(
+            host=config.REDIS_HOST,
+            port=config.REDIS_PORT,
+            db=config.REDIS_DB,
+            password=config.REDIS_PASSWORD,
+            enabled=config.ENABLE_REDIS_CACHE
+        )
+        set_redis_cache(redis_cache)
+        if redis_cache.health_check():
+            logger.info(f"Redis cache initialized at {config.REDIS_HOST}:{config.REDIS_PORT}")
+        else:
+            logger.warning("Redis health check failed")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis: {e}. Running without cache.")
+        redis_cache = None
+else:
+    logger.info("Redis cache disabled by configuration")
 
 # pydantic semantic checks for the historical model
 class historicaldata_post(BaseModel):
@@ -40,7 +80,13 @@ def landing():
 def stream_kline_data():
     session = session_pool()
     stream_market_data = StreamKLineData(session)
-    logger.info("Started thread for streaming kline data")
+    logger.info("Started thread for streaming Binance kline data")
+    stream_market_data.main()
+
+def stream_zerodha_kline_data():
+    session = session_pool()
+    stream_market_data = StreamZerodhaKLineData(session, exchange_segment='NSE', interval='1m')
+    logger.info("Started thread for streaming Zerodha/NSE kline data")
     stream_market_data.main()
 
 @app.get("/historicaldata")
@@ -61,13 +107,70 @@ def fetch_historical_gap_data():
     logger.info("Finished Fetching historical kline gap data")
 
 
+def fetch_zerodha_gap_data():
+    logger.info("Fetching Zerodha historical kline gap data")
+    gap_session = session_pool()
+    ZerodhaDownloader(gap_session, exchange_segment='NSE', interval='1m').fetch_all_gap_historical_data()
+    gap_session.close()
+    logger.info("Finished Fetching Zerodha historical kline gap data")
+
+
 @app.on_event('startup')
 def app_startup():
     scheduler = BackgroundScheduler()
+
+    # Initialize default NSE symbols if configured
+    if config.ENABLE_ZERODHA_STREAMING or config.ENABLE_ZERODHA_GAP_FILL:
+        try:
+            init_session = session_pool()
+            # Check if there are any active Zerodha symbols
+            active_symbols = zerodha_sym.get_active_symbols(init_session, exchange='zerodha')
+            if len(active_symbols) == 0:
+                logger.info("No active Zerodha symbols found, initializing defaults...")
+                zerodha_sym.initialize_default_nse_symbols(init_session)
+            else:
+                logger.info(f"Found {len(active_symbols)} active Zerodha symbols")
+            init_session.close()
+        except Exception as e:
+            logger.error(f"Error initializing Zerodha symbols: {e}")
+
+    # Binance services (existing)
     scheduler.add_job(stream_kline_data)
     #scheduler.add_job(fetch_historical_data)
     scheduler.add_job(fetch_historical_gap_data)
+
+    # Zerodha/NSE services (conditional)
+    if config.ENABLE_ZERODHA_STREAMING:
+        logger.info("Zerodha streaming enabled, adding to scheduler")
+        scheduler.add_job(stream_zerodha_kline_data)
+
+    if config.ENABLE_ZERODHA_GAP_FILL:
+        logger.info("Zerodha gap fill enabled, adding to scheduler")
+        scheduler.add_job(fetch_zerodha_gap_data)
+
+    # Warm up cache with active symbols
+    if config.ENABLE_REDIS_CACHE and redis_cache:
+        try:
+            logger.info("Warming up cache with active symbols...")
+            warm_session = session_pool()
+            from app.db.timescaledb import crud
+
+            # Warm Binance symbols
+            binance_symbols = crud.get_active_symbols_unified(warm_session, exchange='binance', active=True)
+            logger.info(f"Cached {len(binance_symbols)} active Binance symbols")
+
+            # Warm Zerodha symbols if enabled
+            if config.ENABLE_ZERODHA_STREAMING or config.ENABLE_ZERODHA_GAP_FILL:
+                zerodha_symbols = crud.get_active_symbols_unified(warm_session, exchange='zerodha', active=True)
+                logger.info(f"Cached {len(zerodha_symbols)} active Zerodha symbols")
+
+            warm_session.close()
+            logger.info("Cache warming completed")
+        except Exception as e:
+            logger.error(f"Error during cache warming: {e}")
+
     scheduler.start()
+    logger.info("Background scheduler started successfully")
 
 
 @app.get("/symbol/{sym}/from/{start_date}/to/{end_date}")
@@ -100,6 +203,183 @@ def update_market_data(symbol: str):
     msg = c.fetch_recent_historical_data(symbol)
     mkt_data_session.close()
     return msg
+
+
+# ============================================================================
+# ZERODHA/NSE API ENDPOINTS
+# ============================================================================
+
+@app.get("/zerodha/update/symbols")
+def refresh_zerodha_symbols(exchange_segment: str = 'NSE'):
+    """Refresh Zerodha symbols from API"""
+    session = session_pool()
+    try:
+        count = zerodha_sym.refresh_zerodha_symbols(session, exchange_segment=exchange_segment)
+        return {"message": f"Refreshed {count} Zerodha {exchange_segment} symbols", "count": count}
+    except Exception as e:
+        logger.error(f"Error refreshing Zerodha symbols: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.post("/zerodha/activatesymbol/{symbol}/{priority}/{state}")
+def update_zerodha_symbol_status(symbol: str, priority: str, state: str):
+    """Activate/deactivate a Zerodha symbol"""
+    bool_state = True if state.upper() == "TRUE" else False
+    session = session_pool()
+    try:
+        zerodha_sym.set_symbol_priority(
+            symbol=symbol,
+            priority=int(priority),
+            session=session,
+            active=bool_state,
+            exchange='zerodha'
+        )
+        return {"message": "Successful", "symbol": symbol, "priority": priority, "active": bool_state}
+    except Exception as e:
+        logger.error(f"Error updating Zerodha symbol {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.get("/zerodha/update/marketdata/{symbol}")
+def update_zerodha_market_data(symbol: str, exchange_segment: str = 'NSE', interval: str = '1m'):
+    """Update market data for a specific Zerodha symbol"""
+    mkt_data_session = session_pool()
+    try:
+        downloader = ZerodhaDownloader(
+            session=mkt_data_session,
+            exchange_segment=exchange_segment,
+            interval=interval
+        )
+        msg = downloader.fetch_recent_historical_data(symbol)
+        return {"message": msg, "symbol": symbol}
+    except Exception as e:
+        logger.error(f"Error updating Zerodha market data for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        mkt_data_session.close()
+
+
+@app.get("/zerodha/active-symbols")
+def get_active_zerodha_symbols():
+    """Get list of active Zerodha symbols"""
+    session = session_pool()
+    try:
+        symbols = zerodha_sym.get_active_symbols(session, exchange='zerodha')
+        return {"symbols": symbols, "count": len(symbols)}
+    except Exception as e:
+        logger.error(f"Error fetching active Zerodha symbols: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.post("/zerodha/initialize-defaults")
+def initialize_default_nse_symbols():
+    """Initialize default NSE symbols for tracking"""
+    session = session_pool()
+    try:
+        zerodha_sym.initialize_default_nse_symbols(session)
+        active_symbols = zerodha_sym.get_active_symbols(session, exchange='zerodha')
+        return {
+            "message": "Default NSE symbols initialized",
+            "active_symbols": active_symbols,
+            "count": len(active_symbols)
+        }
+    except Exception as e:
+        logger.error(f"Error initializing default NSE symbols: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+# ============================================================================
+# CACHE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/cache/stats")
+def get_cache_stats():
+    """Get cache statistics (hit rate, memory usage, etc.)"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        from app.config import config as cfg
+        cache = get_redis_cache()
+
+        if not cache or not cfg.ENABLE_REDIS_CACHE:
+            return {
+                "enabled": False,
+                "message": "Redis cache is disabled"
+            }
+
+        stats = cache.get_stats()
+        health = cache.health_check()
+
+        return {
+            "enabled": True,
+            "healthy": health,
+            "stats": stats,
+            "redis_config": {
+                "host": cfg.REDIS_HOST,
+                "port": cfg.REDIS_PORT,
+                "db": cfg.REDIS_DB
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching cache stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/cache/clear")
+def clear_all_cache():
+    """Clear all cached data"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+
+        if not cache:
+            raise HTTPException(status_code=400, detail="Redis cache not available")
+
+        cache.clear_all()
+        logger.info("Cleared all cache data")
+        return {"message": "All cache cleared successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/cache/clear/{pattern}")
+def clear_cache_pattern(pattern: str):
+    """Clear cache entries matching a pattern (e.g., 'active_symbols:*')"""
+    try:
+        from app.cache.redis_client import get_redis_cache
+        cache = get_redis_cache()
+
+        if not cache:
+            raise HTTPException(status_code=400, detail="Redis cache not available")
+
+        # Add service prefix if not present
+        if not pattern.startswith("cryptomarket:"):
+            pattern = f"cryptomarket:{pattern}"
+
+        deleted_count = cache.delete_pattern(pattern)
+        logger.info(f"Cleared {deleted_count} cache entries matching pattern: {pattern}")
+
+        return {
+            "message": f"Cleared cache pattern: {pattern}",
+            "deleted_count": deleted_count
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache pattern {pattern}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 '''
