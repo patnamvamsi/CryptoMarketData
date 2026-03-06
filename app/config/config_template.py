@@ -88,3 +88,8 @@ ENABLE_ZERODHA_GAP_FILL = os.getenv('ENABLE_ZERODHA_GAP_FILL', 'True').lower() =
 # - Max 60 days for minute-level data
 # - Max 2000 candles per request
 ZERODHA_MAX_DAYS_BACK = int(os.getenv('ZERODHA_MAX_DAYS_BACK', '60'))  # Maximum days to fetch historical data (for initial fetch)
+
+# NSE Daily Ingestion (APScheduler)
+ENABLE_NSE_DAILY_INGEST = os.getenv('ENABLE_NSE_DAILY_INGEST', 'False').lower() == 'true'
+NSE_INGEST_SCHEDULE_HOUR = int(os.getenv('NSE_INGEST_SCHEDULE_HOUR', '16'))      # IST hour
+NSE_INGEST_SCHEDULE_MINUTE = int(os.getenv('NSE_INGEST_SCHEDULE_MINUTE', '30'))   # IST minute

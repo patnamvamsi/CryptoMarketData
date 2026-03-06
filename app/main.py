@@ -755,18 +755,110 @@ def clear_cache_pattern(pattern: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+# ============================================================================
+# NSE DATA INGESTION ENDPOINTS & SCHEDULER
+# ============================================================================
+
+from datetime import date as _date, datetime as _datetime
+
+@app.post("/ingest/start/{pipeline}")
+def start_nse_ingest(
+    pipeline: str,
+    start_date: str = None,
+    end_date: str = None,
+    skip_existing: bool = True,
+):
+    """
+    Start an NSE ingestion pipeline as a background task.
+
+    pipeline: equity | fo | index | all
+    Runs detached in a daemon thread so FastAPI doesn't block.
+    """
+    from app.ingest.pipeline_runner import start_ingest, PIPELINE_CLASSES
+
+    valid = list(PIPELINE_CLASSES) + ["all"]
+    if pipeline not in valid:
+        raise HTTPException(status_code=400, detail=f"Unknown pipeline '{pipeline}'. Choose from {valid}")
+
+    sd = _datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
+    ed = _datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
+
+    if pipeline == "all":
+        results = {}
+        for name in PIPELINE_CLASSES:
+            results[name] = start_ingest(name, start_date=sd, end_date=ed,
+                                         skip_existing=skip_existing, background=True)
+        return results
+    else:
+        return start_ingest(pipeline, start_date=sd, end_date=ed,
+                            skip_existing=skip_existing, background=True)
+
+
+@app.get("/ingest/status")
+def get_nse_ingest_status():
+    """Return progress JSON for all NSE ingestion pipelines."""
+    from app.ingest.pipeline_runner import get_all_status
+    return get_all_status()
+
+
+@app.post("/ingest/stop/{pipeline}")
+def stop_nse_ingest(pipeline: str):
+    """Gracefully stop a running ingestion pipeline."""
+    from app.ingest.pipeline_runner import stop_ingest, PIPELINE_CLASSES
+
+    if pipeline == "all":
+        results = {}
+        for name in PIPELINE_CLASSES:
+            results[name] = stop_ingest(name)
+        return results
+    else:
+        result = stop_ingest(pipeline)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+
+# Register NSE daily ingest scheduler jobs inside app_startup
+_original_app_startup = app_startup
+
+def _patched_app_startup():
+    _original_app_startup()
+
+    # NSE daily ingestion scheduler
+    from app.config import config_template as cfg
+    if getattr(cfg, 'ENABLE_NSE_DAILY_INGEST', False):
+        from apscheduler.triggers.cron import CronTrigger
+        from app.ingest.pipeline_runner import daily_catchup_all
+        import pytz
+
+        ist = pytz.timezone('Asia/Kolkata')
+        hour = getattr(cfg, 'NSE_INGEST_SCHEDULE_HOUR', 16)
+        minute = getattr(cfg, 'NSE_INGEST_SCHEDULE_MINUTE', 30)
+
+        # We need the scheduler instance — create one that lives with the app
+        nse_scheduler = BackgroundScheduler(timezone=ist)
+        nse_scheduler.add_job(
+            daily_catchup_all,
+            CronTrigger(hour=hour, minute=minute, day_of_week='mon-fri', timezone=ist),
+            id='nse_daily_ingest',
+            name='NSE Daily Catch-up (equity+fo+index)',
+            replace_existing=True,
+        )
+        nse_scheduler.start()
+        logger.info(
+            f"NSE daily ingestion scheduled at {hour:02d}:{minute:02d} IST, Mon-Fri"
+        )
+    else:
+        logger.info("NSE daily ingestion scheduler disabled (ENABLE_NSE_DAILY_INGEST=false)")
+
+# Replace the startup event
+app.on_event('startup')(lambda: None)  # clear original
+app.router.on_startup.clear()
+app.router.on_startup.append(_patched_app_startup)
+
+
 '''
 future apis
 accept the source binance or coinbase etc, default to binance
-1. Design  decision -- how to stream data with min lag -- required for live trading, not now
-
 '''
-'''
-uses these status codes to return correct ones:"
-HTTP_200_OK = 200
-HTTP_201_CREATED = 201
-HTTP_202_ACCEPTED = 202  -- for batch processing
-https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
-'''
-
-''' iki '''
