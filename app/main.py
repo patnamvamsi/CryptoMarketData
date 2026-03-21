@@ -825,14 +825,15 @@ _original_app_startup = app_startup
 def _patched_app_startup():
     _original_app_startup()
 
+    import pytz
+    from apscheduler.triggers.cron import CronTrigger
+    ist = pytz.timezone('Asia/Kolkata')
+
     # NSE daily ingestion scheduler
     from app.config import config_template as cfg
     if getattr(cfg, 'ENABLE_NSE_DAILY_INGEST', False):
-        from apscheduler.triggers.cron import CronTrigger
         from app.ingest.pipeline_runner import daily_catchup_all
-        import pytz
 
-        ist = pytz.timezone('Asia/Kolkata')
         hour = getattr(cfg, 'NSE_INGEST_SCHEDULE_HOUR', 16)
         minute = getattr(cfg, 'NSE_INGEST_SCHEDULE_MINUTE', 30)
 
@@ -851,6 +852,44 @@ def _patched_app_startup():
         )
     else:
         logger.info("NSE daily ingestion scheduler disabled (ENABLE_NSE_DAILY_INGEST=false)")
+
+    # -----------------------------------------------------------------------
+    # Corporate Events — daily at 18:00 IST (after market close)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.nse_corporate_events import run_daily as _corp_daily
+
+        corp_scheduler = BackgroundScheduler(timezone=ist)
+        corp_scheduler.add_job(
+            _corp_daily,
+            CronTrigger(hour=18, minute=0, day_of_week='mon-fri', timezone=ist),
+            id='nse_corporate_events_daily',
+            name='NSE Corporate Events Daily Ingest',
+            replace_existing=True,
+        )
+        corp_scheduler.start()
+        logger.info("NSE corporate events ingestion scheduled at 18:00 IST, Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule corporate events ingest: {e}")
+
+    # -----------------------------------------------------------------------
+    # GDELT News Sentiment — every 6 hours
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.gdelt_ingest import run_latest as _gdelt_latest
+
+        gdelt_scheduler = BackgroundScheduler(timezone=ist)
+        gdelt_scheduler.add_job(
+            _gdelt_latest,
+            CronTrigger(hour='*/6', minute=15, timezone=ist),
+            id='gdelt_sentiment_6h',
+            name='GDELT News Sentiment (every 6h)',
+            replace_existing=True,
+        )
+        gdelt_scheduler.start()
+        logger.info("GDELT news sentiment ingestion scheduled every 6 hours")
+    except Exception as e:
+        logger.warning(f"Could not schedule GDELT ingest: {e}")
 
 # Replace the startup event
 app.on_event('startup')(lambda: None)  # clear original

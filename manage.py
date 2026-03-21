@@ -42,6 +42,38 @@ logging.basicConfig(
 
 
 def cmd_ingest(args):
+    # ------------------------------------------------------------------ #
+    # New standalone ingesters: corporate-events, gdelt                   #
+    # ------------------------------------------------------------------ #
+    if args.pipeline == "corporate-events":
+        from app.ingest.nse_corporate_events import run_backfill, run_daily
+        start = (datetime.strptime(args.start, "%Y-%m-%d").date()
+                 if args.start else None)
+        if start:
+            print(f"▶ NSE corporate events backfill from {start}...")
+            result = run_backfill(start=start)
+        else:
+            print("▶ NSE corporate events daily run...")
+            result = run_daily()
+        print(f"✓ corporate-events: {json.dumps(result, default=str)}")
+        return
+
+    if args.pipeline == "gdelt":
+        from app.ingest.gdelt_ingest import run_backfill as gdelt_backfill, run_latest
+        start = (datetime.strptime(args.start, "%Y-%m-%d").date()
+                 if args.start else None)
+        if start:
+            print(f"▶ GDELT backfill from {start}...")
+            result = gdelt_backfill(start=start)
+        else:
+            print("▶ GDELT latest run...")
+            result = run_latest()
+        print(f"✓ gdelt: {json.dumps(result, default=str)}")
+        return
+
+    # ------------------------------------------------------------------ #
+    # Existing pipeline runner                                            #
+    # ------------------------------------------------------------------ #
     from app.ingest.pipeline_runner import (
         start_ingest, get_all_status, PIPELINE_DEFAULTS, PIPELINE_CLASSES,
     )
@@ -89,8 +121,11 @@ def main():
     ingest_p = sub.add_parser("ingest", help="Run NSE data ingestion pipelines")
     ingest_p.add_argument(
         "pipeline",
-        choices=["equity", "fo", "index", "all", "status"],
-        help="Pipeline to run, 'all' for all three, or 'status' to check progress",
+        choices=["equity", "fo", "index", "all", "status", "corporate-events", "gdelt"],
+        help=(
+            "Pipeline to run: equity|fo|index|all|status|"
+            "corporate-events|gdelt"
+        ),
     )
     ingest_p.add_argument("--start", default=None, help="Start date YYYY-MM-DD")
     ingest_p.add_argument("--end", default=None, help="End date YYYY-MM-DD (default: yesterday)")
