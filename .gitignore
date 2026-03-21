@@ -1,6 +1,7 @@
 app/config/config.py
 app/logs/*
 .venv/
+venv/
 .vscode/
 __pycache__/
 *.pyc
@@ -18,3 +19,8 @@ app/ingest/__pycache__/
 app/kafka/__pycache__/
 app/logger.py
 app/stream/__pycache__/
+
+# Secrets & tokens
+app/zerodha_access_token.txt
+*.token
+*.key
