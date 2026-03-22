@@ -891,6 +891,59 @@ def _patched_app_startup():
     except Exception as e:
         logger.warning(f"Could not schedule GDELT ingest: {e}")
 
+    # -----------------------------------------------------------------------
+    # Options Chain Snapshot — daily at 15:29 IST (market close)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.options_chain_snapshot import take_snapshot, save_snapshot
+
+        def _options_close_snapshot():
+            df = take_snapshot()
+            if not df.empty:
+                save_snapshot(df, label="close")
+                logger.info(f"Options close snapshot saved: {len(df)} rows")
+
+        opts_scheduler = BackgroundScheduler(timezone=ist)
+        opts_scheduler.add_job(
+            _options_close_snapshot,
+            CronTrigger(hour=15, minute=29, day_of_week='mon-fri', timezone=ist),
+            id='options_close_snapshot',
+            name='Options Chain Close Snapshot',
+            replace_existing=True,
+        )
+        # Intraday snapshots at 10:30, 12:00, 14:00
+        for snap_hour, snap_min, label in [(10, 30, 'am'), (12, 0, 'noon'), (14, 0, 'pm')]:
+            opts_scheduler.add_job(
+                lambda l=label: save_snapshot(take_snapshot(), label=l),
+                CronTrigger(hour=snap_hour, minute=snap_min, day_of_week='mon-fri', timezone=ist),
+                id=f'options_intraday_{label}',
+                name=f'Options Chain Intraday Snapshot ({label})',
+                replace_existing=True,
+            )
+        opts_scheduler.start()
+        logger.info("Options chain snapshots scheduled: 10:30, 12:00, 14:00, 15:29 IST Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule options snapshots: {e}")
+
+    # -----------------------------------------------------------------------
+    # FII/DII Daily Update — 17:00 IST (after F&O data published)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.fii_dii_ingest import run_daily as _fii_dii_daily
+
+        fiidii_scheduler = BackgroundScheduler(timezone=ist)
+        fiidii_scheduler.add_job(
+            _fii_dii_daily,
+            CronTrigger(hour=17, minute=0, day_of_week='mon-fri', timezone=ist),
+            id='fii_dii_daily',
+            name='FII/DII Daily Update',
+            replace_existing=True,
+        )
+        fiidii_scheduler.start()
+        logger.info("FII/DII daily update scheduled at 17:00 IST Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule FII/DII daily update: {e}")
+
 # Replace the startup event
 app.on_event('startup')(lambda: None)  # clear original
 app.router.on_startup.clear()
