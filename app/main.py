@@ -131,6 +131,29 @@ def fetch_zerodha_gap_data():
 
 @app.on_event('startup')
 def app_startup():
+    # --- Fallback recovery: reload any pending Parquet files from disk ---
+    try:
+        from app.ingest.startup_loader import run_startup_sync
+        from pathlib import Path as _Path
+        _fallback_dir = _Path(getattr(config, "DATA_ROOT_DIR", "/media/vboxuser/test/NSE_Data"))
+        _conn_factory = lambda: __import__('psycopg2').connect(
+            host=getattr(config, 'DB_HOST', '192.168.0.201'),
+            port=int(getattr(config, 'DB_PORT', 5432)),
+            dbname=getattr(config, 'DB_NAME', 'market_data'),
+            user=getattr(config, 'DB_USER', 'postgres'),
+            password=getattr(config, 'DB_PASS', 'postgres'),
+        )
+        import threading as _threading
+        _threading.Thread(
+            target=run_startup_sync,
+            args=(_conn_factory, _fallback_dir),
+            daemon=True,
+            name="StartupFallbackSync",
+        ).start()
+        logger.info("Startup fallback sync started in background thread")
+    except Exception as _e:
+        logger.warning("Could not start startup fallback sync: %s", _e)
+
     scheduler = BackgroundScheduler()
 
     # Initialize Zerodha services (with graceful degradation on auth failure)
