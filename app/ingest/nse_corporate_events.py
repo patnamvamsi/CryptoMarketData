@@ -47,8 +47,9 @@ def _signal_handler(sig, frame):
     logger.info("Shutdown signal received, finishing current symbol...")
     _shutdown = True
 
-signal.signal(signal.SIGTERM, _signal_handler)
-signal.signal(signal.SIGINT, _signal_handler)
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
 
 
 # ============================================================================

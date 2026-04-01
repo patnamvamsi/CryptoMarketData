@@ -83,8 +83,9 @@ def _sig(sig, frame):
     global _shutdown
     log.info("Shutdown signal — finishing current batch...")
     _shutdown = True
-signal.signal(signal.SIGTERM, _sig)
-signal.signal(signal.SIGINT,  _sig)
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _sig)
+    signal.signal(signal.SIGINT,  _sig)
 
 
 # ---------------------------------------------------------------------------
