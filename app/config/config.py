@@ -82,6 +82,10 @@ ZERODHA_EXCHANGE_SEGMENT = os.getenv('ZERODHA_EXCHANGE_SEGMENT', 'NSE')  # NSE, 
 ZERODHA_DEFAULT_INTERVAL = os.getenv('ZERODHA_DEFAULT_INTERVAL', '1m')   # 1m, 5m, 15m, 1h, 1d
 ENABLE_ZERODHA_STREAMING = os.getenv('ENABLE_ZERODHA_STREAMING', 'True').lower() == 'true'   # Enable/disable Zerodha streaming on startup
 ENABLE_ZERODHA_GAP_FILL = os.getenv('ENABLE_ZERODHA_GAP_FILL', 'True').lower() == 'true'    # Enable/disable gap filling on startup
+ENABLE_ZERODHA_AUTO_AUTH = os.getenv('ENABLE_ZERODHA_AUTO_AUTH', 'False').lower() == 'true'  # Enable headless auto-auth via TOTP
+ZERODHA_USERNAME = os.getenv('ZERODHA_USERNAME', '')
+ZERODHA_PASSWORD = os.getenv('ZERODHA_PASSWORD', '')
+ZERODHA_TOTP_KEY = os.getenv('ZERODHA_TOTP_KEY', '')
 
 # Zerodha data fetching limits
 # Note: Zerodha API has limits on historical data:
@@ -93,3 +97,11 @@ ZERODHA_MAX_DAYS_BACK = int(os.getenv('ZERODHA_MAX_DAYS_BACK', '60'))  # Maximum
 ENABLE_NSE_DAILY_INGEST = os.getenv('ENABLE_NSE_DAILY_INGEST', 'False').lower() == 'true'
 NSE_INGEST_SCHEDULE_HOUR = int(os.getenv('NSE_INGEST_SCHEDULE_HOUR', '16'))      # IST hour
 NSE_INGEST_SCHEDULE_MINUTE = int(os.getenv('NSE_INGEST_SCHEDULE_MINUTE', '30'))   # IST minute
+
+# Redis Cache
+ENABLE_REDIS_CACHE = os.getenv('ENABLE_REDIS_CACHE', 'True').lower() == 'true'
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_DB = int(os.getenv('REDIS_DB', '0'))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
+STREAM_TICKER_KAFKA = os.getenv('STREAM_TICKER_KAFKA', 'False').lower() == 'true'

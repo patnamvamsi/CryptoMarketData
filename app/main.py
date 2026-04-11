@@ -131,6 +131,29 @@ def fetch_zerodha_gap_data():
 
 @app.on_event('startup')
 def app_startup():
+    # --- Fallback recovery: reload any pending Parquet files from disk ---
+    try:
+        from app.ingest.startup_loader import run_startup_sync
+        from pathlib import Path as _Path
+        _fallback_dir = _Path(getattr(config, "DATA_ROOT_DIR", "/media/vboxuser/test/NSE_Data"))
+        _conn_factory = lambda: __import__('psycopg2').connect(
+            host=getattr(config, 'DB_HOST', '192.168.0.201'),
+            port=int(getattr(config, 'DB_PORT', 5432)),
+            dbname=getattr(config, 'DB_NAME', 'market_data'),
+            user=getattr(config, 'DB_USER', 'postgres'),
+            password=getattr(config, 'DB_PASS', 'postgres'),
+        )
+        import threading as _threading
+        _threading.Thread(
+            target=run_startup_sync,
+            args=(_conn_factory, _fallback_dir),
+            daemon=True,
+            name="StartupFallbackSync",
+        ).start()
+        logger.info("Startup fallback sync started in background thread")
+    except Exception as _e:
+        logger.warning("Could not start startup fallback sync: %s", _e)
+
     scheduler = BackgroundScheduler()
 
     # Initialize Zerodha services (with graceful degradation on auth failure)
@@ -755,18 +778,202 @@ def clear_cache_pattern(pattern: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+# ============================================================================
+# NSE DATA INGESTION ENDPOINTS & SCHEDULER
+# ============================================================================
+
+from datetime import date as _date, datetime as _datetime
+
+@app.post("/ingest/start/{pipeline}")
+def start_nse_ingest(
+    pipeline: str,
+    start_date: str = None,
+    end_date: str = None,
+    skip_existing: bool = True,
+):
+    """
+    Start an NSE ingestion pipeline as a background task.
+
+    pipeline: equity | fo | index | all
+    Runs detached in a daemon thread so FastAPI doesn't block.
+    """
+    from app.ingest.pipeline_runner import start_ingest, PIPELINE_CLASSES
+
+    valid = list(PIPELINE_CLASSES) + ["all"]
+    if pipeline not in valid:
+        raise HTTPException(status_code=400, detail=f"Unknown pipeline '{pipeline}'. Choose from {valid}")
+
+    sd = _datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
+    ed = _datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
+
+    if pipeline == "all":
+        results = {}
+        for name in PIPELINE_CLASSES:
+            results[name] = start_ingest(name, start_date=sd, end_date=ed,
+                                         skip_existing=skip_existing, background=True)
+        return results
+    else:
+        return start_ingest(pipeline, start_date=sd, end_date=ed,
+                            skip_existing=skip_existing, background=True)
+
+
+@app.get("/ingest/status")
+def get_nse_ingest_status():
+    """Return progress JSON for all NSE ingestion pipelines."""
+    from app.ingest.pipeline_runner import get_all_status
+    return get_all_status()
+
+
+@app.post("/ingest/stop/{pipeline}")
+def stop_nse_ingest(pipeline: str):
+    """Gracefully stop a running ingestion pipeline."""
+    from app.ingest.pipeline_runner import stop_ingest, PIPELINE_CLASSES
+
+    if pipeline == "all":
+        results = {}
+        for name in PIPELINE_CLASSES:
+            results[name] = stop_ingest(name)
+        return results
+    else:
+        result = stop_ingest(pipeline)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+
+# Register NSE daily ingest scheduler jobs inside app_startup
+_original_app_startup = app_startup
+
+def _patched_app_startup():
+    _original_app_startup()
+
+    import pytz
+    from apscheduler.triggers.cron import CronTrigger
+    ist = pytz.timezone('Asia/Kolkata')
+
+    # NSE daily ingestion scheduler
+    from app.config import config_template as cfg
+    if getattr(cfg, 'ENABLE_NSE_DAILY_INGEST', False):
+        from app.ingest.pipeline_runner import daily_catchup_all
+
+        hour = getattr(cfg, 'NSE_INGEST_SCHEDULE_HOUR', 16)
+        minute = getattr(cfg, 'NSE_INGEST_SCHEDULE_MINUTE', 30)
+
+        # We need the scheduler instance — create one that lives with the app
+        nse_scheduler = BackgroundScheduler(timezone=ist)
+        nse_scheduler.add_job(
+            daily_catchup_all,
+            CronTrigger(hour=hour, minute=minute, day_of_week='mon-fri', timezone=ist),
+            id='nse_daily_ingest',
+            name='NSE Daily Catch-up (equity+fo+index)',
+            replace_existing=True,
+        )
+        nse_scheduler.start()
+        logger.info(
+            f"NSE daily ingestion scheduled at {hour:02d}:{minute:02d} IST, Mon-Fri"
+        )
+    else:
+        logger.info("NSE daily ingestion scheduler disabled (ENABLE_NSE_DAILY_INGEST=false)")
+
+    # -----------------------------------------------------------------------
+    # Corporate Events — daily at 18:00 IST (after market close)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.nse_corporate_events import run_daily as _corp_daily
+
+        corp_scheduler = BackgroundScheduler(timezone=ist)
+        corp_scheduler.add_job(
+            _corp_daily,
+            CronTrigger(hour=18, minute=0, day_of_week='mon-fri', timezone=ist),
+            id='nse_corporate_events_daily',
+            name='NSE Corporate Events Daily Ingest',
+            replace_existing=True,
+        )
+        corp_scheduler.start()
+        logger.info("NSE corporate events ingestion scheduled at 18:00 IST, Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule corporate events ingest: {e}")
+
+    # -----------------------------------------------------------------------
+    # GDELT News Sentiment — every 6 hours
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.gdelt_ingest import run_latest as _gdelt_latest
+
+        gdelt_scheduler = BackgroundScheduler(timezone=ist)
+        gdelt_scheduler.add_job(
+            _gdelt_latest,
+            CronTrigger(hour='*/6', minute=15, timezone=ist),
+            id='gdelt_sentiment_6h',
+            name='GDELT News Sentiment (every 6h)',
+            replace_existing=True,
+        )
+        gdelt_scheduler.start()
+        logger.info("GDELT news sentiment ingestion scheduled every 6 hours")
+    except Exception as e:
+        logger.warning(f"Could not schedule GDELT ingest: {e}")
+
+    # -----------------------------------------------------------------------
+    # Options Chain Snapshot — daily at 15:29 IST (market close)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.options_chain_snapshot import take_snapshot, save_snapshot
+
+        def _options_close_snapshot():
+            df = take_snapshot()
+            if not df.empty:
+                save_snapshot(df, label="close")
+                logger.info(f"Options close snapshot saved: {len(df)} rows")
+
+        opts_scheduler = BackgroundScheduler(timezone=ist)
+        opts_scheduler.add_job(
+            _options_close_snapshot,
+            CronTrigger(hour=15, minute=29, day_of_week='mon-fri', timezone=ist),
+            id='options_close_snapshot',
+            name='Options Chain Close Snapshot',
+            replace_existing=True,
+        )
+        # Intraday snapshots at 10:30, 12:00, 14:00
+        for snap_hour, snap_min, label in [(10, 30, 'am'), (12, 0, 'noon'), (14, 0, 'pm')]:
+            opts_scheduler.add_job(
+                lambda l=label: save_snapshot(take_snapshot(), label=l),
+                CronTrigger(hour=snap_hour, minute=snap_min, day_of_week='mon-fri', timezone=ist),
+                id=f'options_intraday_{label}',
+                name=f'Options Chain Intraday Snapshot ({label})',
+                replace_existing=True,
+            )
+        opts_scheduler.start()
+        logger.info("Options chain snapshots scheduled: 10:30, 12:00, 14:00, 15:29 IST Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule options snapshots: {e}")
+
+    # -----------------------------------------------------------------------
+    # FII/DII Daily Update — 17:00 IST (after F&O data published)
+    # -----------------------------------------------------------------------
+    try:
+        from app.ingest.fii_dii_ingest import run_daily as _fii_dii_daily
+
+        fiidii_scheduler = BackgroundScheduler(timezone=ist)
+        fiidii_scheduler.add_job(
+            _fii_dii_daily,
+            CronTrigger(hour=17, minute=0, day_of_week='mon-fri', timezone=ist),
+            id='fii_dii_daily',
+            name='FII/DII Daily Update',
+            replace_existing=True,
+        )
+        fiidii_scheduler.start()
+        logger.info("FII/DII daily update scheduled at 17:00 IST Mon-Fri")
+    except Exception as e:
+        logger.warning(f"Could not schedule FII/DII daily update: {e}")
+
+# Replace the startup event
+app.on_event('startup')(lambda: None)  # clear original
+app.router.on_startup.clear()
+app.router.on_startup.append(_patched_app_startup)
+
+
 '''
 future apis
 accept the source binance or coinbase etc, default to binance
-1. Design  decision -- how to stream data with min lag -- required for live trading, not now
-
 '''
-'''
-uses these status codes to return correct ones:"
-HTTP_200_OK = 200
-HTTP_201_CREATED = 201
-HTTP_202_ACCEPTED = 202  -- for batch processing
-https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
-'''
-
-''' iki '''
