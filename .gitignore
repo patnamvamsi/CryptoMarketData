@@ -24,3 +24,15 @@ app/stream/__pycache__/
 app/zerodha_access_token.txt
 *.token
 *.key
+.idea/
+app/auth/token_manager.py
+docker-compose.yml
+docs/CLAUDE.md
+docs/CLEANUP_SUMMARY.md
+docs/PROJECT_STRUCTURE.md
+docs/REQUIREMENTS.md
+docs/ZERODHA_TABLE_FIX.md
+scripts/.gitkeep
+tests/.gitkeep
+tests/cache/.gitkeep
+tests/integration/.gitkeep
