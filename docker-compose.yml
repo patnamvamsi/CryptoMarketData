@@ -1,0 +1,36 @@
+version: '3.8'
+
+# NOTE: This docker-compose file is for standalone CryptoMarketData development only.
+# When running the full system, use the main docker-compose.yml in the parent directory,
+# which provides a shared Redis instance (vritti-redis) for all microservices.
+#
+# If you need to run CryptoMarketData standalone with Redis, you can uncomment the
+# redis service below, or point REDIS_HOST to an external Redis instance.
+
+services:
+  # Redis cache service (COMMENTED OUT - use shared vritti-redis from main docker-compose.yml)
+  # Uncomment this section only if running CryptoMarketData in standalone mode
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: cryptomarket-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+  #   restart: unless-stopped
+  #   networks:
+  #     - cryptomarket-network
+
+# volumes:
+#   redis_data:
+#     driver: local
+
+networks:
+  cryptomarket-network:
+    driver: bridge

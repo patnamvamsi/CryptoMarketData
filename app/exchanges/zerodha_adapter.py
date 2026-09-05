@@ -18,7 +18,19 @@ from .base_exchange import BaseExchange
 from app.config import config
 from app.models.market_data import Symbol, Kline
 
-# Try to import automated auth module
+# Try to import automated auth modules. Browser-based (real headless Chromium, drives the
+# actual login page) is tried first — see app/auth/zerodha_browser_auth.py for why. The
+# older raw-requests approach is kept as a fallback in case Playwright is ever unavailable.
+try:
+    from app.auth.zerodha_browser_auth import (
+        get_request_token as get_request_token_browser,
+        ZerodhaBrowserAuthError,
+    )
+    BROWSER_AUTH_AVAILABLE = True
+except ImportError as e:
+    BROWSER_AUTH_AVAILABLE = False
+    ZerodhaBrowserAuthError = Exception  # Fallback
+
 try:
     from app.auth.zerodha_auto_auth import get_request_token, ZerodhaAuthError
     AUTO_AUTH_AVAILABLE = True
@@ -34,6 +46,8 @@ except ImportError as e:
     TOKEN_MANAGER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+if not BROWSER_AUTH_AVAILABLE:
+    logger.warning("Browser-based Zerodha authentication not available (missing dependencies)")
 if not AUTO_AUTH_AVAILABLE:
     logger.warning("Automated Zerodha authentication not available (missing dependencies)")
 if not TOKEN_MANAGER_AVAILABLE:
@@ -63,9 +77,11 @@ class ZerodhaAdapter(BaseExchange):
         Authentication priority (first successful method used):
         1. Provided access_token parameter (explicit override)
         2. Provided request_token parameter (explicit override)
-        3. Automated authentication using credentials from config
-        4. Load from file (app/zerodha_access_token.txt)
-        5. Raise exception if all methods fail
+        3. Shared token from Redis (written by this adapter, store_zerodha_token_redis.py,
+           or another service)
+        4. Automated authentication using credentials from config
+        5. Load from file (app/zerodha_access_token.txt)
+        6. Raise exception if all methods fail
 
         Args:
             access_token: Pre-generated access token (valid for 1 day)
@@ -97,10 +113,30 @@ class ZerodhaAdapter(BaseExchange):
             self._set_and_validate_token(access_token)
 
         else:
-            # Tier 3: Try automated authentication
             auth_success = False
 
-            if self._should_attempt_auto_auth():
+            # Tier 3: Try the shared Redis token (written by this adapter on a
+            # previous successful auth, by scripts/store_zerodha_token_redis.py,
+            # or by another service). Checked before auto-auth so a still-valid
+            # shared token is reused instead of re-hitting Zerodha's login flow.
+            if TOKEN_MANAGER_AVAILABLE:
+                try:
+                    from app.cache.redis_client import get_redis_cache
+                    redis = get_redis_cache()
+                    if redis and redis.enabled:
+                        shared_token = get_token_manager(redis).get_token()
+                        if shared_token:
+                            try:
+                                self._set_and_validate_token(shared_token)
+                                auth_success = True
+                                logger.info("Using shared access token from Redis")
+                            except Exception as e:
+                                logger.warning(f"Shared Redis token invalid: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to check shared Redis token: {e}")
+
+            # Tier 4: Try automated authentication
+            if not auth_success and self._should_attempt_auto_auth():
                 logger.info("Attempting automated Zerodha authentication...")
                 try:
                     auto_request_token = self._try_automated_auth()
@@ -113,7 +149,7 @@ class ZerodhaAdapter(BaseExchange):
                     logger.warning(f"Automated authentication failed: {e}")
                     logger.info("Falling back to manual authentication flow...")
 
-            # Tier 4: Load from file (if auto-auth failed or was skipped)
+            # Tier 5: Load from file (if Redis/auto-auth failed or were skipped)
             if not auth_success:
                 loaded_token = self._load_access_token()
                 if loaded_token:
@@ -127,7 +163,7 @@ class ZerodhaAdapter(BaseExchange):
                             "Please provide credentials for automated auth or manually generate token."
                         )
                 else:
-                    # Tier 5: No authentication available
+                    # Tier 6: No authentication available
                     raise Exception(
                         "No Zerodha authentication available. Please either:\n"
                         "1. Set ZERODHA_USERNAME, ZERODHA_PASSWORD, ZERODHA_TOTP_KEY in .env for automated auth\n"
@@ -679,8 +715,8 @@ class ZerodhaAdapter(BaseExchange):
         Returns:
             bool: True if all conditions are met for auto-auth
         """
-        if not AUTO_AUTH_AVAILABLE:
-            logger.debug("Auto-auth module not available")
+        if not BROWSER_AUTH_AVAILABLE and not AUTO_AUTH_AVAILABLE:
+            logger.debug("No auto-auth module available")
             return False
 
         if not config.ENABLE_ZERODHA_AUTO_AUTH:
@@ -705,12 +741,35 @@ class ZerodhaAdapter(BaseExchange):
         """
         Attempt automated authentication using credentials from config.
 
+        Tries the real-browser (Playwright) approach first — it drives the actual login
+        page, same as a human does manually, rather than forging requests to Zerodha's
+        internal API endpoints. Falls back to the raw-requests approach only if Playwright
+        is unavailable; that approach is known-broken (persistent 403 as of 2026-08-22, see
+        docs/ZERODHA_TOKEN_SHARING.md) but kept as a fallback in case that ever changes.
+
         Returns:
             Optional[str]: Request token if successful, None otherwise
 
         Raises:
             ZerodhaAuthError: If authentication fails with detailed error
         """
+        if BROWSER_AUTH_AVAILABLE:
+            try:
+                request_token = get_request_token_browser(
+                    api_key=config.ZERODHA_API_KEY,
+                    username=config.ZERODHA_USERNAME,
+                    password=config.ZERODHA_PASSWORD,
+                    totp_key=config.ZERODHA_TOTP_KEY,
+                    timeout=30
+                )
+                logger.info("Browser-based automated authentication successful")
+                return request_token
+            except ZerodhaBrowserAuthError as e:
+                logger.warning(f"Browser-based automated authentication failed: {e}")
+                if not AUTO_AUTH_AVAILABLE:
+                    raise ZerodhaAuthError(str(e)) from e
+                logger.info("Falling back to raw-requests automated authentication...")
+
         try:
             request_token = get_request_token(
                 api_key=config.ZERODHA_API_KEY,

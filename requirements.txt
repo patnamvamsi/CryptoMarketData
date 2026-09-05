@@ -14,7 +14,7 @@ dateparser==1.2.0
 exceptiongroup==1.2.0
 fastapi==0.104.1
 frozenlist==1.4.0
-greenlet==3.0.2
+greenlet>=3.0.3
 h11==0.14.0
 idna==3.6
 jugaad-data==0.26
@@ -51,4 +51,6 @@ kiteconnect
 redis>=4.5.0
 hiredis>=2.0.0
 onetimepass>=1.0.1
+pyotp>=2.9.0
 pyarrow>=14.0.0
+playwright>=1.45.0

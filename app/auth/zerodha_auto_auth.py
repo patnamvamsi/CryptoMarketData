@@ -36,6 +36,7 @@ def get_request_token(
     username: str = None,
     password: str = None,
     totp_key: str = None,
+    timeout: int = 30,
 ) -> str:
     """
     Perform automated Zerodha login and return a request_token.
@@ -50,6 +51,7 @@ def get_request_token(
         username: Zerodha user ID (falls back to env)
         password: Zerodha password (falls back to env)
         totp_key: TOTP secret for 2FA (falls back to env)
+        timeout: per-request HTTP timeout in seconds
 
     Returns:
         request_token string
@@ -81,7 +83,7 @@ def get_request_token(
         resp = session.post(LOGIN_URL, data={
             'user_id': username,
             'password': password,
-        })
+        }, timeout=timeout)
         resp.raise_for_status()
         login_data = resp.json()
     except Exception as e:
@@ -105,7 +107,7 @@ def get_request_token(
             'request_id': request_id,
             'twofa_value': totp_value,
             'twofa_type': 'totp',
-        })
+        }, timeout=timeout)
         resp.raise_for_status()
         twofa_data = resp.json()
     except Exception as e:
@@ -138,7 +140,7 @@ def get_request_token(
         f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
     )
     try:
-        resp = session.get(kite_login_url, allow_redirects=False)
+        resp = session.get(kite_login_url, allow_redirects=False, timeout=timeout)
     except Exception as e:
         raise ZerodhaAuthError(f"Kite connect redirect failed: {e}")
 
@@ -148,7 +150,7 @@ def get_request_token(
     # Sometimes need to follow one more redirect
     if redirect_url and 'request_token' not in redirect_url:
         try:
-            resp = session.get(redirect_url, allow_redirects=False)
+            resp = session.get(redirect_url, allow_redirects=False, timeout=timeout)
             redirect_url = resp.headers.get('Location', redirect_url)
         except Exception as e:
             raise ZerodhaAuthError(f"Follow redirect failed: {e}")
@@ -157,7 +159,7 @@ def get_request_token(
     if 'request_token' not in redirect_url:
         finish_url = f"https://kite.zerodha.com/connect/finish?api_key={api_key}&v=3"
         try:
-            resp = session.get(finish_url, allow_redirects=False)
+            resp = session.get(finish_url, allow_redirects=False, timeout=timeout)
             redirect_url = resp.headers.get('Location', redirect_url)
         except Exception as e:
             raise ZerodhaAuthError(f"Finish redirect failed: {e}")

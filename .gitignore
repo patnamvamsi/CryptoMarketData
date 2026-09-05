@@ -24,3 +24,11 @@ app/stream/__pycache__/
 app/zerodha_access_token.txt
 *.token
 *.key
+
+# Graphify knowledge graph output
+graphify-out/
+
+# IDE / local agent / runtime
+.idea/
+.claude/
+logs/

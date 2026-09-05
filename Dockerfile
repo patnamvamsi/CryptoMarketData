@@ -1,10 +1,13 @@
-FROM python:3.11
+FROM python:3.10
 
 COPY . /marketdata
 
 WORKDIR /marketdata/app
 
 RUN pip3 install -r ../requirements.txt
+
+# Headless Chromium for browser-driven Zerodha auto-login (app/auth/zerodha_browser_auth.py)
+RUN playwright install --with-deps chromium
 
 ENV PYTHONPATH "${PYTHONPATH}:/marketdata"
 

@@ -17,6 +17,12 @@ Steps:
 """
 
 import sys
+import os
+
+# Add parent directory to path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
 from app.config import config
 from kiteconnect import KiteConnect
 
@@ -55,10 +61,20 @@ def main():
     print("📍 STEP 2: After logging in, you'll be redirected to a URL like:")
     print("  http://127.0.0.1/?request_token=XXXXX&action=login&status=success")
     print()
-    request_token = input("Paste the request_token from the URL: ").strip()
+    pasted = input("Paste the request_token (or the full redirect URL): ").strip()
+
+    if not pasted:
+        print("❌ No request token provided. Exiting.")
+        sys.exit(1)
+
+    if 'request_token=' in pasted:
+        from urllib.parse import urlparse, parse_qs
+        request_token = parse_qs(urlparse(pasted).query).get('request_token', [''])[0]
+    else:
+        request_token = pasted
 
     if not request_token:
-        print("❌ No request token provided. Exiting.")
+        print("❌ Could not find a request_token in the pasted value. Exiting.")
         sys.exit(1)
 
     print()
@@ -71,7 +87,8 @@ def main():
         access_token = data["access_token"]
 
         # Save to file
-        with open("../app/zerodha_access_token.txt", "w") as f:
+        token_path = os.path.join(PROJECT_ROOT, "app", "zerodha_access_token.txt")
+        with open(token_path, "w") as f:
             f.write(access_token)
 
         print("✅ SUCCESS! Access token generated and saved.")

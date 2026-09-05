@@ -1,3 +1,5 @@
+import json
+
 from app.config import config
 from binance import ThreadedWebsocketManager
 from binance import Client
@@ -50,7 +52,7 @@ class StreamKLineData:
                 #print(symbol, candle_stick)
                 q.insert_kline_rows(symbol, kline, candle_stick, self.session)
                 if STREAM_MARKET_DATA_KAFKA:
-                    self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, bytes(str(candle_stick).encode('utf-8')))
+                    self.kafka_producer.send(KAFKA_MARKET_DATA_TOPIC, json.dumps(candle_stick).encode('utf-8'))
 
         def convert_to_candle_stick(msg):
             symbol = msg['s']

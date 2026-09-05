@@ -5,6 +5,7 @@ Streams live market data from Zerodha using KiteTicker WebSocket.
 Handles active symbols and stores data to TimescaleDB.
 """
 
+import json
 import logging
 from typing import List, Dict, Any
 
@@ -163,9 +164,12 @@ class StreamZerodhaKLineData:
             # Publish to Kafka if enabled
             if STREAM_MARKET_DATA_KAFKA and self.kafka_producer:
                 try:
+                    # default=str: tick_data['open_time']/['close_time'] may still be raw
+                    # datetime objects here (only the local *_ms variables used for the DB
+                    # insert are converted above; the dict itself is never mutated).
                     self.kafka_producer.send(
                         KAFKA_MARKET_DATA_TOPIC,
-                        bytes(str(tick_data).encode('utf-8'))
+                        json.dumps(tick_data, default=str).encode('utf-8')
                     )
                 except Exception as e:
                     logger.error(f"Failed to publish to Kafka: {e}")

@@ -7,6 +7,7 @@ from fastapi import FastAPI, status, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import text
+from kiteconnect import KiteConnect
 
 from app import config
 from pydantic import BaseModel
@@ -591,6 +592,94 @@ def fetch_zerodha_gap_data_endpoint(exchange_segment: str = 'NSE', interval: str
     finally:
         gap_session.close()
         logger.info("Finished Fetching Zerodha historical kline gap data")
+
+
+# ============================================================================
+# ZERODHA OAUTH CALLBACK
+# ============================================================================
+# Point your Kite Connect app's "Redirect URL" (developers.kite.trade) at
+# http://<this-host>:8002/zerodha/callback instead of the default 127.0.0.1:8080
+# placeholder. Login still needs a human in a browser — Zerodha blocks headless login
+# attempts (see docs/ZERODHA_TOKEN_SHARING.md) — but this removes the copy/paste-the-token
+# step, and restarts the service automatically so the fresh token actually takes effect
+# (the running WebSocket stream holds its adapter reference for the container's lifetime,
+# so a real restart — not just re-storing the token — is required; see
+# StreamZerodhaKLineData.__init__).
+
+def _delayed_self_restart(delay_seconds: float = 1.5) -> None:
+    """
+    Give the HTTP response time to reach the browser, then terminate PID 1 so Docker's
+    `restart: unless-stopped` policy brings the container back up cleanly. Sending SIGTERM
+    to this process alone isn't enough: uvicorn --reload runs the app in a child of PID 1,
+    so only killing PID 1 reliably restarts the whole container regardless of uvicorn's own
+    reload-subprocess behavior.
+    """
+    import signal
+    time.sleep(delay_seconds)
+    logger.info("Restarting market-data to pick up the freshly captured Zerodha token")
+    os.kill(1, signal.SIGTERM)
+
+
+@app.get("/zerodha/callback")
+def zerodha_oauth_callback(
+    background_tasks: BackgroundTasks,
+    request_token: str = None,
+    status: str = None,
+    action: str = None,
+):
+    """
+    Kite Connect OAuth redirect target. Exchanges request_token for an access_token,
+    stores it in Redis for cross-service sharing, then restarts this service so the new
+    token actually takes effect (see module-level comment above).
+    """
+    from fastapi.responses import HTMLResponse
+
+    if status != 'success' or not request_token:
+        return HTMLResponse(
+            f"<h2>Zerodha login did not complete (status={status})</h2>"
+            f"<p>No token was captured. Try the login URL again.</p>",
+            status_code=400,
+        )
+
+    try:
+        kite = KiteConnect(api_key=config.ZERODHA_API_KEY)
+        data = kite.generate_session(request_token, api_secret=config.ZERODHA_SECRET_KEY)
+        access_token = data["access_token"]
+
+        kite.set_access_token(access_token)
+        profile = kite.profile()
+        user_id = profile.get('user_id', profile.get('user_name', 'Unknown'))
+
+        if not config.ENABLE_REDIS_CACHE or not redis_cache:
+            return HTMLResponse(
+                "<h2>Token generated but Redis is unavailable</h2>"
+                "<p>Nothing was stored for other services to share. Redis must be up "
+                "for this endpoint to be useful.</p>",
+                status_code=500,
+            )
+
+        from app.auth.token_manager import get_token_manager
+        token_manager = get_token_manager(redis_cache)
+        stored = token_manager.store_token(access_token, user_id, profile)
+
+        if not stored:
+            return HTMLResponse("<h2>Token generated but failed to store in Redis</h2>", status_code=500)
+
+        logger.info(f"Zerodha token captured via OAuth callback for user {user_id}")
+        background_tasks.add_task(_delayed_self_restart)
+
+        return HTMLResponse(f"""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h2>✅ Zerodha authenticated</h2>
+            <p>User: {profile.get('user_name', user_id)}</p>
+            <p>Token stored in Redis. Restarting market-data now to pick it up
+            (~10-20 seconds)&hellip;</p>
+            </body></html>
+        """)
+
+    except Exception as e:
+        logger.error(f"Zerodha OAuth callback failed: {e}")
+        return HTMLResponse(f"<h2>&#10060; Failed: {e}</h2>", status_code=500)
 
 
 # ============================================================================
