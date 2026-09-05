@@ -25,7 +25,7 @@ from binance import ThreadedWebsocketManager, Client
 
 from app.config import config
 from app.config.config import (
-    STREAM_MARKET_DATA_KAFKA,
+    ENABLE_TICKER_KAFKA,
     KAFKA_BOOTSTRAP_SERVERS
 )
 from app.kafka.kafka_utils import get_kafka_producer
@@ -57,7 +57,7 @@ class StreamBinanceTicker:
             enable_redis: Enable Redis price updates
         """
         self.session = session
-        self.enable_kafka = enable_kafka and STREAM_MARKET_DATA_KAFKA
+        self.enable_kafka = enable_kafka and ENABLE_TICKER_KAFKA
         self.enable_redis = enable_redis
 
         # Get active symbols from database (convert to list for mutability)

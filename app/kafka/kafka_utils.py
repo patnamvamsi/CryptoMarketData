@@ -2,7 +2,12 @@ import logging
 from kafka import KafkaProducer
 from kafka.admin import KafkaAdminClient, NewTopic
 from kafka.errors import TopicAlreadyExistsError
-from app.config.config import KAFKA_TOPICS, KAFKA_BOOTSTRAP_SERVERS, STREAM_MARKET_DATA_KAFKA
+from app.config.config import (
+    KAFKA_TOPICS,
+    KAFKA_BOOTSTRAP_SERVERS,
+    STREAM_MARKET_DATA_KAFKA,
+    ENABLE_TICKER_KAFKA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +45,8 @@ def create_ticker_topics_for_symbols(symbols: list):
     Args:
         symbols: List of trading pair symbols
     """
-    if not STREAM_MARKET_DATA_KAFKA:
-        logger.info("Kafka streaming disabled, skipping ticker topic creation")
+    if not ENABLE_TICKER_KAFKA:
+        logger.info("Ticker Kafka disabled (STREAM_TICKER_KAFKA), skipping ticker topic creation")
         return
 
     logger.info(f"Creating ticker topics for {len(symbols)} symbols")

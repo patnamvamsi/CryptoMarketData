@@ -105,3 +105,6 @@ REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_DB = int(os.getenv('REDIS_DB', '0'))
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 STREAM_TICKER_KAFKA = os.getenv('STREAM_TICKER_KAFKA', 'False').lower() == 'true'
+# Tick publish/topic-create follows STREAM_TICKER_KAFKA (compose default true).
+# STREAM_MARKET_DATA_KAFKA still gates kline/log topics.
+ENABLE_TICKER_KAFKA = STREAM_TICKER_KAFKA or STREAM_MARKET_DATA_KAFKA
